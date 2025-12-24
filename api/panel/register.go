@@ -68,7 +68,7 @@ func (c *Client) Register(req *RegisterRequest) (*RegisterResponse, error) {
 	resp, err := c.client.R().
 		SetBody(req).
 		SetResult(&result).
-		Post("/api/v1/node/register")
+		Post("/api/v2/node/register")
 
 	if err != nil {
 		return nil, fmt.Errorf("send register request: %w", err)
@@ -96,10 +96,10 @@ func (c *Client) Heartbeat(req *HeartbeatRequest) error {
 
 	// 如果启用签名且有 secret
 	if c.EnableSign && c.Secret != "" {
-		c.addSignatureToRequest(r, "POST", "/api/v1/node/heartbeat", req)
+		c.addSignatureToRequest(r, "POST", "/api/v2/node/heartbeat", req)
 	}
 
-	resp, err := r.Post("/api/v1/node/heartbeat")
+	resp, err := r.Post("/api/v2/node/heartbeat")
 
 	if err != nil {
 		return fmt.Errorf("send heartbeat request: %w", err)

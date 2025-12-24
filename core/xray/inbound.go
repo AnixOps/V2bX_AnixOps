@@ -64,6 +64,11 @@ func buildInbound(option *conf.Options, nodeInfo *panel.NodeInfo, tag string) (*
 		sniffingConfig.Enabled = false
 	}
 	in.SniffingConfig = sniffingConfig
+	// Ensure StreamSetting is initialized before accessing it
+	if in.StreamSetting == nil {
+		t := coreConf.TransportProtocol(network)
+		in.StreamSetting = &coreConf.StreamConfig{Network: &t}
+	}
 	switch network {
 	case "tcp":
 		if in.StreamSetting.TCPSettings != nil {

@@ -150,7 +150,7 @@ type Rules struct {
 }
 
 func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
-	const path = "/api/v1/server/UniProxy/config"
+	const path = "/api/v2/server/UniProxy/config"
 	r, err := c.client.
 		R().
 		SetHeader("If-None-Match", c.nodeEtag).
@@ -183,12 +183,17 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 
 	// 先解析基础信息获取节点类型
 	var baseInfo struct {
-		Type string `json:"type"`
+		Type     string `json:"type"`
+		NodeType string `json:"node_type"` // 支持 node_type 字段
 	}
 	if err = json.Unmarshal(r.Body(), &baseInfo); err != nil {
 		return nil, fmt.Errorf("decode node type error: %s", err)
 	}
+	// 优先使用 type，如果为空则使用 node_type
 	nodeType := strings.ToLower(baseInfo.Type)
+	if nodeType == "" {
+		nodeType = strings.ToLower(baseInfo.NodeType)
+	}
 	if nodeType == "" {
 		return nil, fmt.Errorf("node type not found in response")
 	}

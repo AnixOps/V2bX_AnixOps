@@ -21,7 +21,7 @@
       
 
       "AutoRegister": true,
-      "AuthKey": "51588bb9548146b305ec503b665111cf35eaa4b219cf0d96f762872e9b835862",
+      "AuthKey": "b8b4447779a7c0f7e44b515821c6e414ee3609b8ae621f39bee2e365d7e928b1",
       "NodeName": "Test-Node-01",
       "NodeHost": "127.0.0.1",
       "NodePort": 443,
