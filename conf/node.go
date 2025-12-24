@@ -28,9 +28,24 @@ type ApiConfig struct {
 	APISendIP    string `json:"ApiSendIP"`
 	NodeID       int    `json:"NodeID"`
 	Key          string `json:"ApiKey"`
-	NodeType     string `json:"NodeType"`
 	Timeout      int    `json:"Timeout"`
 	RuleListPath string `json:"RuleListPath"`
+
+	// 自动发现相关配置
+	AuthKey           string `json:"AuthKey"`           // 授权密钥 (首次注册使用)
+	NodeName          string `json:"NodeName"`          // 节点名称
+	NodeHost          string `json:"NodeHost"`          // 节点地址 (可选，默认使用客户端IP)
+	NodePort          int    `json:"NodePort"`          // API端口 (默认443)
+	CredentialFile    string `json:"CredentialFile"`    // 凭证存储路径
+	HeartbeatInterval int    `json:"HeartbeatInterval"` // 心跳间隔 (秒，默认60)
+	AutoRegister      bool   `json:"AutoRegister"`      // 是否启用自动注册
+
+	// 安全增强配置
+	EnableSign        bool `json:"EnableSign"`        // 是否启用请求签名 (默认true)
+	EncryptCredential bool `json:"EncryptCredential"` // 是否加密存储凭证 (默认true)
+
+	// 运行时参数 (不从配置文件读取)
+	ForceReRegister bool `json:"-"` // 强制重新注册 (命令行参数)
 }
 
 func (n *NodeConfig) UnmarshalJSON(data []byte) (err error) {

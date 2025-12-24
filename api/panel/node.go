@@ -180,9 +180,29 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 	} else {
 		return nil, fmt.Errorf("received nil response")
 	}
+
+	// 先解析基础信息获取节点类型
+	var baseInfo struct {
+		Type string `json:"type"`
+	}
+	if err = json.Unmarshal(r.Body(), &baseInfo); err != nil {
+		return nil, fmt.Errorf("decode node type error: %s", err)
+	}
+	nodeType := strings.ToLower(baseInfo.Type)
+	if nodeType == "" {
+		return nil, fmt.Errorf("node type not found in response")
+	}
+	// 规范化节点类型
+	switch nodeType {
+	case "v2ray":
+		nodeType = "vmess"
+	}
+	// 更新客户端的 NodeType
+	c.NodeType = nodeType
+
 	node = &NodeInfo{
 		Id:   c.NodeId,
-		Type: c.NodeType,
+		Type: nodeType,
 		RawDNS: RawDNS{
 			DNSMap:  make(map[string]map[string]interface{}),
 			DNSJson: []byte(""),
@@ -190,7 +210,7 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 	}
 	// parse protocol params
 	var cm *CommonNode
-	switch c.NodeType {
+	switch nodeType {
 	case "vmess", "vless":
 		rsp := &VAllssNode{}
 		err = json.Unmarshal(r.Body(), rsp)

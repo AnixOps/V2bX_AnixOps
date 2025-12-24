@@ -1,0 +1,48 @@
+{
+  "Log": {
+    "Level": "debug",
+    "Output": ""
+  },
+  "Cores": [
+    {
+      "Type": "xray",
+      "Log": {
+        "Level": "debug",
+        "Timestamp": true
+      }
+    }
+  ],
+  "Nodes": [
+    {
+      "Core": "xray",
+      
+
+      "ApiHost": "http://127.0.0.1:8080",
+      
+
+      "AutoRegister": true,
+      "AuthKey": "51588bb9548146b305ec503b665111cf35eaa4b219cf0d96f762872e9b835862",
+      "NodeName": "Test-Node-01",
+      "NodeHost": "127.0.0.1",
+      "NodePort": 443,
+      "CredentialFile": "data/credential.json",
+      "HeartbeatInterval": 60,
+      
+      "EnableSign": true,
+      "EncryptCredential": true,
+
+      "Timeout": 30,
+      "ListenIP": "0.0.0.0",
+      "SendIP": "0.0.0.0",
+      "DeviceOnlineMinTraffic": 200,
+      "MinReportTraffic": 0,
+      "TCPFastOpen": false,
+      "SniffEnabled": true,
+      "CertConfig": {
+        "CertMode": "none",
+        "RejectUnknownSni": false,
+        "CertDomain": "localhost"
+      }
+    }
+  ]
+}

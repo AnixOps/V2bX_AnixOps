@@ -707,7 +707,6 @@ def get_alive_list(node_type: str, node_id: int, token: str):
       "ApiHost": "https://your-panel.com",
       "ApiKey": "your-api-token",
       "NodeID": 1,
-      "NodeType": "vmess",
       "Timeout": 30,
       "ListenIP": "0.0.0.0",
       "SendIP": "0.0.0.0",
@@ -743,3 +742,227 @@ def get_alive_list(node_type: str, node_id: int, token: str):
 | Hysteria2 | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | TUIC | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ |
 | AnyTLS | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+---
+
+## 节点自动发现与注册
+
+### 概述
+
+节点自动发现机制允许新节点通过授权密钥自动注册到面板，无需手动配置 NodeID。
+
+### 密钥层次结构
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  授权密钥 (AuthKey)                                             │
+│  - 一次性使用，用于节点首次注册                                    │
+│  - 管理员在后台生成，部署时配置到节点                               │
+│  - 注册成功后自动失效                                             │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓ 注册成功后获得
+┌─────────────────────────────────────────────────────────────────┐
+│  节点凭证 (api_key + secret)                                     │
+│  - 每个节点独立一组                                               │
+│  - 用于后续所有 API 通信 (心跳、上报等)                            │
+│  - 本地持久化存储                                                 │
+│  - 可在管理后台撤销/重置                                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### 工作流程
+
+```
+┌──────────────┐                         ┌──────────────┐
+│   节点客户端   │                         │   V2Board    │
+└──────┬───────┘                         └──────┬───────┘
+       │                                        │
+       │  1. 检查本地是否有凭证                   │
+       │  ┌───────────────────┐                 │
+       │  │ 有凭证 → 跳到步骤4   │                 │
+       │  │ 无凭证 → 继续步骤2   │                 │
+       │  └───────────────────┘                 │
+       │                                        │
+       │  2. POST /api/v1/node/register        │
+       │  {auth_key, name, host, port, ...}    │
+       │ ─────────────────────────────────────►│
+       │                                        │
+       │  3. 返回节点凭证                        │
+       │  {node_id, api_key, secret}           │
+       │◄───────────────────────────────────── │
+       │                                        │
+       │  4. 保存凭证到本地文件                   │
+       │                                        │
+       │  5. POST /api/v1/node/heartbeat       │
+       │  Header: X-API-Key: <api_key>         │
+       │  {cpu_usage, memory_usage, ...}       │
+       │ ─────────────────────────────────────►│
+       │                                        │
+       │  6. 定时心跳 (每60秒)                   │
+       │ ─────────────────────────────────────►│
+       │                                        │
+```
+
+---
+
+### 节点注册
+
+**Endpoint:** `POST /api/v1/node/register`
+
+**Request:**
+```json
+{
+    "auth_key": "abc123def456...",   // 必填: 授权密钥
+    "name": "Tokyo-Node-01",         // 可选: 节点名称
+    "host": "node1.example.com",     // 可选: 节点地址 (默认使用客户端IP)
+    "port": 443,                     // 可选: API端口 (默认443)
+    "server_version": "1.0.0",       // 可选: 节点程序版本
+    "server_os": "Linux 5.15"        // 可选: 操作系统信息
+}
+```
+
+**Response (Success):**
+```json
+{
+    "message": "注册成功",
+    "data": {
+        "node_id": 1,
+        "api_key": "a1b2c3d4e5f6...",   // 64字符
+        "secret": "x9y8z7w6v5u4...",    // 64字符
+        "message": "节点注册成功"
+    }
+}
+```
+
+**Response (Error):**
+```json
+{
+    "message": "授权密钥无效"
+}
+```
+
+---
+
+### 节点心跳
+
+**Endpoint:** `POST /api/v1/node/heartbeat`
+
+**Headers:**
+```
+X-API-Key: <api_key>
+```
+
+**Request:**
+```json
+{
+    "cpu_usage": 45.5,        // CPU使用率 (%)
+    "memory_usage": 60.2,     // 内存使用率 (%)
+    "disk_usage": 30.0,       // 磁盘使用率 (%)
+    "uptime": 86400,          // 运行时间 (秒)
+    "online_users": 150,      // 在线用户数
+    "upload": 1073741824,     // 本周期上传流量增量 (bytes)
+    "download": 5368709120    // 本周期下载流量增量 (bytes)
+}
+```
+
+**Response (Success):**
+```json
+{
+    "message": "ok"
+}
+```
+
+**Response (Error - Unauthorized):**
+```json
+{
+    "message": "API Key 无效或已过期"
+}
+```
+
+---
+
+### 自动发现配置示例
+
+```json
+{
+  "Nodes": [
+    {
+      "Core": "sing",
+      "ApiHost": "https://your-panel.com",
+      "AutoRegister": true,
+      "AuthKey": "your-auth-key-here",
+      "NodeName": "Tokyo-Node-01",
+      "NodeHost": "",
+      "NodePort": 443,
+      "CredentialFile": "data/credential.json",
+      "HeartbeatInterval": 60,
+      "EnableSign": true,
+      "EncryptCredential": true,
+      "ListenIP": "0.0.0.0"
+    }
+  ]
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `AutoRegister` | bool | 否 | 是否启用自动注册模式 |
+| `AuthKey` | string | 条件必填 | 授权密钥，启用自动注册时必填 |
+| `NodeName` | string | 否 | 节点名称，默认使用主机名 |
+| `NodeHost` | string | 否 | 节点地址，留空则自动检测 |
+| `NodePort` | int | 否 | API 端口，默认 443 |
+| `CredentialFile` | string | 否 | 凭证存储路径，默认 `data/credential.json` |
+| `HeartbeatInterval` | int | 否 | 心跳间隔（秒），默认 60 |
+| `EnableSign` | bool | 否 | 是否启用请求签名，默认 `true` |
+| `EncryptCredential` | bool | 否 | 是否加密存储凭证，默认 `true` |
+
+---
+
+## 安全增强
+
+### 请求签名
+
+启用 `EnableSign` 后，心跳等请求会自动添加 HMAC-SHA256 签名。
+
+**签名算法：**
+```
+signature = HMAC-SHA256(timestamp + method + path + body, secret)
+```
+
+**请求 Headers：**
+```
+X-API-Key: <api_key>
+X-Timestamp: <unix_timestamp>
+X-Nonce: <random_32_hex>
+X-Signature: <hmac_sha256_hex>
+```
+
+**安全特性：**
+
+| 特性 | 说明 |
+|------|------|
+| 防篡改 | 修改请求体会导致签名不匹配 |
+| 防重放 | nonce 一次性使用，5分钟内有效 |
+| 时效性 | 时间戳超过5分钟的请求被拒绝 |
+| 身份绑定 | secret 与节点绑定，泄露不影响其他节点 |
+
+### 凭证加密存储
+
+启用 `EncryptCredential` 后，凭证文件使用 AES-256-GCM 加密存储。
+
+**加密密钥派生：**
+```
+key = SHA256(machine_id + "v2bx-node-credential-v1")
+```
+
+- 机器特征从 `/etc/machine-id` 或主机名获取
+- 凭证文件后缀为 `.enc`
+- 即使文件泄露，在其他机器上也无法解密
+
+### 日志脱敏
+
+敏感信息在日志中自动脱敏：
+```
+APIKey: a1b2****e5f6
+AuthKey: abcd****wxyz
+```

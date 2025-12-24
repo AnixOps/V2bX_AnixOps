@@ -3,6 +3,7 @@ package cmd
 import (
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"syscall"
 
@@ -15,8 +16,9 @@ import (
 )
 
 var (
-	config string
-	watch  bool
+	config     string
+	watch      bool
+	reRegister bool
 )
 
 var serverCommand = cobra.Command{
@@ -29,15 +31,54 @@ var serverCommand = cobra.Command{
 func init() {
 	serverCommand.PersistentFlags().
 		StringVarP(&config, "config", "c",
-			"/etc/V2bX/config.json", "config file path")
+			getDefaultConfigPath(), "config file path")
 	serverCommand.PersistentFlags().
 		BoolVarP(&watch, "watch", "w",
 			true, "watch file path change")
+	serverCommand.PersistentFlags().
+		BoolVarP(&reRegister, "re-register", "r",
+			false, "force re-register node (delete existing credentials)")
 	command.AddCommand(&serverCommand)
+}
+
+// getDefaultConfigPath 根据操作系统返回默认配置文件路径
+func getDefaultConfigPath() string {
+	if runtime.GOOS == "windows" {
+		// Windows: 使用可执行文件所在目录或当前目录
+		exe, err := os.Executable()
+		if err == nil {
+			configPath := filepath.Join(filepath.Dir(exe), "config.json")
+			if _, err := os.Stat(configPath); err == nil {
+				return configPath
+			}
+		}
+		// 尝试当前目录
+		if _, err := os.Stat("config.json"); err == nil {
+			return "config.json"
+		}
+		return "config.json"
+	}
+	// Linux/macOS: 使用 /etc/V2bX/config.json
+	return "/etc/V2bX/config.json"
 }
 
 func serverHandle(_ *cobra.Command, _ []string) {
 	showVersion()
+
+	// 检查配置文件是否存在
+	if _, err := os.Stat(config); os.IsNotExist(err) {
+		log.WithField("path", config).Error("Config file not found")
+		log.Info("Usage: V2bX server -c /path/to/config.json")
+		log.Info("       V2bX -c /path/to/config.json")
+		if runtime.GOOS == "windows" {
+			log.Info("On Windows, you can place config.json in the same directory as the executable")
+		} else {
+			log.Info("On Linux/macOS, the default config path is /etc/V2bX/config.json")
+		}
+		return
+	}
+
+	log.WithField("config", config).Info("Loading config file")
 	c := conf.New()
 	err := c.LoadFromPath(config)
 	if err != nil {
@@ -75,6 +116,15 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	}
 	defer vc.Close()
 	log.Info("Core ", vc.Type(), " started")
+
+	// 如果指定了重新注册，设置所有节点的 ForceReRegister 标志
+	if reRegister {
+		log.Info("Force re-register mode enabled")
+		for i := range c.NodeConfig {
+			c.NodeConfig[i].ApiConfig.ForceReRegister = true
+		}
+	}
+
 	nodes := node.New()
 	err = nodes.Start(c.NodeConfig, vc)
 	if err != nil {
