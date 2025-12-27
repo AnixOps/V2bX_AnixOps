@@ -20,22 +20,61 @@ func (c *Xray) AddNode(tag string, info *panel.NodeInfo, config *conf.Options) e
 	c.nodeReportMinTrafficBytes[tag] = config.ReportMinTraffic * 1024
 	err := updateDNSConfig(info)
 	if err != nil {
+		if c.debugger.IsEnabled() {
+			c.debugger.LogError("updateDNSConfig", tag, err)
+		}
 		return fmt.Errorf("build dns error: %s", err)
 	}
 	inboundConfig, err := buildInbound(config, info, tag)
 	if err != nil {
+		if c.debugger.IsEnabled() {
+			c.debugger.LogError("buildInbound", tag, err)
+		}
 		return fmt.Errorf("build inbound error: %s", err)
 	}
+
+	// 调试: 记录 Xray 入站配置
+	if c.debugger.IsEnabled() {
+		c.debugger.LogXrayConfig(tag, map[string]interface{}{
+			"node_type":    info.Type,
+			"node_id":      info.Id,
+			"security":     info.Security,
+			"inbound_tag":  tag,
+			"inbound_conf": inboundConfig,
+		})
+	}
+
 	err = c.addInbound(inboundConfig)
 	if err != nil {
+		if c.debugger.IsEnabled() {
+			c.debugger.LogError("addInbound", tag, err)
+		}
 		return fmt.Errorf("add inbound error: %s", err)
 	}
+
+	// 调试: 记录入站添加成功
+	if c.debugger.IsEnabled() {
+		port := 0
+		if info.Common != nil {
+			port = info.Common.ServerPort
+		}
+		c.debugger.LogInboundAdd(tag, info.Type, port, map[string]interface{}{
+			"security": info.Security,
+		})
+	}
+
 	outBoundConfig, err := buildOutbound(config, tag)
 	if err != nil {
+		if c.debugger.IsEnabled() {
+			c.debugger.LogError("buildOutbound", tag, err)
+		}
 		return fmt.Errorf("build outbound error: %s", err)
 	}
 	err = c.addOutbound(outBoundConfig)
 	if err != nil {
+		if c.debugger.IsEnabled() {
+			c.debugger.LogError("addOutbound", tag, err)
+		}
 		return fmt.Errorf("add outbound error: %s", err)
 	}
 	return nil
@@ -72,6 +111,11 @@ func (c *Xray) addOutbound(config *core.OutboundHandlerConfig) error {
 }
 
 func (c *Xray) DelNode(tag string) error {
+	// 调试: 记录入站移除
+	if c.debugger.IsEnabled() {
+		c.debugger.LogInboundRemove(tag)
+	}
+
 	err := c.removeInbound(tag)
 	if err != nil {
 		return fmt.Errorf("remove in error: %s", err)

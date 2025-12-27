@@ -1,0 +1,14 @@
+{
+  "base_config": {
+    "pull_interval": 60,
+    "push_interval": 60
+  },
+  "host": "127.0.0.1",
+  "network": "tcp",
+  "node_type": "vmess",
+  "routes": [],
+  "send_through": "0.0.0.0",
+  "server_name": "127.0.0.1",
+  "server_port": 443,
+  "tls": 0
+}

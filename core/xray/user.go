@@ -54,6 +54,12 @@ func (c *Xray) DelUsers(users []panel.UserInfo, tag string, _ *panel.NodeInfo) e
 			c.dispatcher.LinkManagers.Delete(user)
 		}
 	}
+
+	// 调试: 记录用户移除
+	if c.debugger.IsEnabled() {
+		c.debugger.LogUserRemove(tag, len(users))
+	}
+
 	return nil
 }
 
@@ -129,5 +135,18 @@ func (c *Xray) AddUsers(p *vCore.AddUsersParams) (added int, err error) {
 			return 0, err
 		}
 	}
+
+	// 调试: 记录用户添加
+	if c.debugger.IsEnabled() {
+		userEmails := make([]string, len(users))
+		for i, u := range users {
+			userEmails[i] = u.Email
+		}
+		c.debugger.LogUserAdd(p.Tag, len(users), map[string]interface{}{
+			"node_type": p.NodeInfo.Type,
+			"emails":    userEmails,
+		})
+	}
+
 	return len(users), nil
 }

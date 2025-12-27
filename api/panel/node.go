@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"encoding/json"
+
+	log "github.com/sirupsen/logrus"
 )
 
 // Security type
@@ -181,21 +183,38 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 		return nil, fmt.Errorf("received nil response")
 	}
 
+	// 调试: 保存原始响应
+	if c.Debugger != nil && c.Debugger.IsEnabled() {
+		if err := c.Debugger.DumpNodeConfig(r.Body(), c.NodeId); err != nil {
+			log.WithError(err).Warn("Failed to dump node config")
+		}
+	}
+
 	// 先解析基础信息获取节点类型
 	var baseInfo struct {
 		Type     string `json:"type"`
 		NodeType string `json:"node_type"` // 支持 node_type 字段
 	}
+
+	// 调试：打印原始响应内容
+	log.WithField("response", string(r.Body())).Debug("Raw node config response")
+
 	if err = json.Unmarshal(r.Body(), &baseInfo); err != nil {
 		return nil, fmt.Errorf("decode node type error: %s", err)
 	}
+
+	log.WithFields(log.Fields{
+		"type":      baseInfo.Type,
+		"node_type": baseInfo.NodeType,
+	}).Debug("Parsed node type fields")
+
 	// 优先使用 type，如果为空则使用 node_type
 	nodeType := strings.ToLower(baseInfo.Type)
 	if nodeType == "" {
 		nodeType = strings.ToLower(baseInfo.NodeType)
 	}
 	if nodeType == "" {
-		return nil, fmt.Errorf("node type not found in response")
+		return nil, fmt.Errorf("node type not found in response, raw: %s", string(r.Body()))
 	}
 	// 规范化节点类型
 	switch nodeType {
@@ -337,6 +356,13 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 	// clear
 	cm.Routes = nil
 	cm.BaseConfig = nil
+
+	// 调试: 保存解析后的节点信息
+	if c.Debugger != nil && c.Debugger.IsEnabled() {
+		if err := c.Debugger.DumpParsedNodeInfo(node, c.NodeId); err != nil {
+			log.WithError(err).Warn("Failed to dump parsed node info")
+		}
+	}
 
 	return node, nil
 }

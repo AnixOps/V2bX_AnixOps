@@ -37,6 +37,7 @@ type Xray struct {
 	dispatcher                *dispatcher.DefaultDispatcher
 	users                     *UserMap
 	nodeReportMinTrafficBytes map[string]int64
+	debugger                  *CoreDebugger
 }
 
 type UserMap struct {
@@ -45,12 +46,17 @@ type UserMap struct {
 }
 
 func New(c *conf.CoreConfig) (vCore.Core, error) {
+	// 判断是否启用内核调试 (日志级别为 debug 时自动启用)
+	enableDebug := c.XrayConfig != nil && c.XrayConfig.LogConfig != nil &&
+		c.XrayConfig.LogConfig.Level == "debug"
+
 	return &Xray{
 		Server: getCore(c.XrayConfig),
 		users: &UserMap{
 			uidMap: make(map[string]int),
 		},
 		nodeReportMinTrafficBytes: make(map[string]int64),
+		debugger:                  NewCoreDebugger(enableDebug, "test_data/core_debug"),
 	}, nil
 }
 
@@ -189,6 +195,12 @@ func (c *Xray) Start() error {
 	c.ihm = c.Server.GetFeature(inbound.ManagerType()).(inbound.Manager)
 	c.ohm = c.Server.GetFeature(outbound.ManagerType()).(outbound.Manager)
 	c.dispatcher = c.Server.GetFeature(routing.DispatcherType()).(*dispatcher.DefaultDispatcher)
+
+	// 调试: 记录内核启动
+	if c.debugger.IsEnabled() {
+		c.debugger.LogCoreStart("xray", core.Version())
+	}
+
 	return nil
 }
 
@@ -196,6 +208,13 @@ func (c *Xray) Start() error {
 func (c *Xray) Close() error {
 	c.access.Lock()
 	defer c.access.Unlock()
+
+	// 调试: 记录内核停止
+	if c.debugger.IsEnabled() {
+		c.debugger.DumpCurrentState()
+		c.debugger.LogCoreStop("xray")
+	}
+
 	c.ihm = nil
 	c.ohm = nil
 	c.dispatcher = nil

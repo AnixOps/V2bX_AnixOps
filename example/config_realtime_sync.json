@@ -1,0 +1,83 @@
+{
+  "Log": {
+    "Level": "info",
+    "Output": ""
+  },
+  "Cores": [
+    {
+      "Type": "sing",
+      "Log": {
+        "Level": "info",
+        "Timestamp": true
+      },
+      "NTP": {
+        "Enable": false,
+        "Server": "time.apple.com",
+        "ServerPort": 0
+      },
+      "OriginalPath": "/etc/V2bX/sing_origin.json"
+    }
+  ],
+  "Nodes": [
+    {
+      "Core": "sing",
+      "ApiHost": "https://your-panel.com",
+      
+      // 自动注册配置
+      "AutoRegister": true,
+      "AuthKey": "your-auth-key-from-panel",
+      "NodeName": "Tokyo-Node-01",
+      "NodeHost": "",
+      "NodePort": 443,
+      "CredentialFile": "data/credential.json",
+      "HeartbeatInterval": 60,
+      
+      // 安全配置
+      "EnableSign": true,
+      "EncryptCredential": true,
+      
+      // 实时同步配置 (双边通讯)
+      "SyncConfig": {
+        // 是否启用 WebSocket 实时同步
+        "EnableWebSocket": true,
+        // WebSocket 端点路径
+        "WSEndpoint": "/api/v2/node/ws",
+        // 断线重连间隔 (秒)
+        "ReconnectInterval": 5,
+        // 最大重连尝试次数 (0=无限)
+        "MaxReconnectTries": 0,
+        // 心跳间隔 (秒)
+        "PingInterval": 30,
+        // Pong 超时时间 (秒)
+        "PongTimeout": 10,
+        // 消息确认超时 (秒)
+        "AckTimeout": 5,
+        // 消息缓冲区大小
+        "BufferSize": 100,
+        // 是否启用降级模式 (WebSocket 不可用时自动切换到轮询)
+        "EnableFallback": true,
+        // 降级模式轮询间隔 (秒)
+        "FallbackInterval": 60
+      },
+      
+      "Timeout": 30,
+      "ListenIP": "0.0.0.0",
+      "SendIP": "0.0.0.0",
+      "DeviceOnlineMinTraffic": 200,
+      "MinReportTraffic": 0,
+      "TCPFastOpen": false,
+      "SniffEnabled": true,
+      "CertConfig": {
+        "CertMode": "self",
+        "RejectUnknownSni": false,
+        "CertDomain": "example.com",
+        "CertFile": "/etc/V2bX/fullchain.cer",
+        "KeyFile": "/etc/V2bX/cert.key",
+        "Provider": "cloudflare",
+        "DNSEnv": {
+          "EnvName": "env1"
+        }
+      }
+    }
+  ]
+}

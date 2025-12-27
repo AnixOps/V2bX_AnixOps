@@ -1,0 +1,22 @@
+{
+  "config": {
+    "inbound_conf": {
+      "tag": "[http://127.0.0.1:8080]-vless:1",
+      "receiver_settings": {
+        "type": "xray.app.proxyman.ReceiverConfig",
+        "value": "CgoKCAifnAEQn5wBEgYKBAAAAAAaMhIrEiQKInhyYXkudHJhbnNwb3J0LmludGVybmV0LnRjcC5Db25maWcaA3RjcCoDdGNwMg0IARIEaHR0cBIDdGxz"
+      },
+      "proxy_settings": {
+        "type": "xray.proxy.vless.inbound.Config",
+        "value": "GgRub25l"
+      }
+    },
+    "inbound_tag": "[http://127.0.0.1:8080]-vless:1",
+    "node_id": 1,
+    "node_type": "vless",
+    "security": 0
+  },
+  "event": "xray_inbound_config",
+  "tag": "[http://127.0.0.1:8080]-vless:1",
+  "timestamp": "2025-12-27T02:11:30Z"
+}

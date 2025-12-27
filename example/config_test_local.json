@@ -21,7 +21,7 @@
       
 
       "AutoRegister": true,
-      "AuthKey": "b8b4447779a7c0f7e44b515821c6e414ee3609b8ae621f39bee2e365d7e928b1",
+      "AuthKey": "cec1690f49b4c18e1bc983ff257b835aaf19929500e029ffce176d7476162e92",
       "NodeName": "Test-Node-01",
       "NodeHost": "127.0.0.1",
       "NodePort": 443,
@@ -30,6 +30,9 @@
       
       "EnableSign": true,
       "EncryptCredential": true,
+
+      "EnableDebug": true,
+      "DebugOutputDir": "test_data/api_debug",
 
       "Timeout": 30,
       "ListenIP": "0.0.0.0",

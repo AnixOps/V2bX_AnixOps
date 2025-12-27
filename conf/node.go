@@ -44,6 +44,10 @@ type ApiConfig struct {
 	EnableSign        bool `json:"EnableSign"`        // 是否启用请求签名 (默认true)
 	EncryptCredential bool `json:"EncryptCredential"` // 是否加密存储凭证 (默认true)
 
+	// 调试配置
+	EnableDebug    bool   `json:"EnableDebug"`    // 是否启用 API 调试
+	DebugOutputDir string `json:"DebugOutputDir"` // 调试输出目录 (默认 test_data/api_debug)
+
 	// 运行时参数 (不从配置文件读取)
 	ForceReRegister bool `json:"-"` // 强制重新注册 (命令行参数)
 }
@@ -133,6 +137,44 @@ type Options struct {
 	SingOptions            *SingOptions    `json:"SingOptions"`
 	Hysteria2ConfigPath    string          `json:"Hysteria2ConfigPath"`
 	CertConfig             *CertConfig     `json:"CertConfig"`
+	SyncConfig             *SyncConfig     `json:"SyncConfig"`
+}
+
+// SyncConfig 同步配置
+type SyncConfig struct {
+	// WebSocket 配置
+	EnableWebSocket   bool   `json:"EnableWebSocket"`
+	WSEndpoint        string `json:"WSEndpoint"`
+	ReconnectInterval int    `json:"ReconnectInterval"` // 秒
+	MaxReconnectTries int    `json:"MaxReconnectTries"` // 0 = 无限重试
+
+	// 心跳配置
+	PingInterval int `json:"PingInterval"` // 秒
+	PongTimeout  int `json:"PongTimeout"`  // 秒
+
+	// 消息配置
+	AckTimeout int `json:"AckTimeout"` // 秒
+	BufferSize int `json:"BufferSize"`
+
+	// 降级配置
+	EnableFallback   bool `json:"EnableFallback"`
+	FallbackInterval int  `json:"FallbackInterval"` // 秒
+}
+
+// NewSyncConfig 创建默认同步配置
+func NewSyncConfig() *SyncConfig {
+	return &SyncConfig{
+		EnableWebSocket:   false, // 默认不启用，等后端支持后启用
+		WSEndpoint:        "/api/v2/node/ws",
+		ReconnectInterval: 5,
+		MaxReconnectTries: 0,
+		PingInterval:      30,
+		PongTimeout:       10,
+		AckTimeout:        5,
+		BufferSize:        100,
+		EnableFallback:    true,
+		FallbackInterval:  60,
+	}
 }
 
 func (o *Options) UnmarshalJSON(data []byte) error {

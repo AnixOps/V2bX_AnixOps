@@ -33,6 +33,7 @@ type Client struct {
 	EncCredStore     *EncryptedCredentialStore // 凭证存储 (加密)
 	EnableSign       bool                      // 是否启用签名
 	EncryptCred      bool                      // 是否加密凭证
+	Debugger         *DebugDumper              // 调试工具
 }
 
 func New(c *conf.ApiConfig) (*Client, error) {
@@ -105,6 +106,19 @@ func New(c *conf.ApiConfig) (*Client, error) {
 		EncCredStore: encCredStore,
 		EnableSign:   enableSign,
 		EncryptCred:  encryptCred,
+	}
+
+	// 初始化调试工具
+	if c.EnableDebug {
+		debugDir := c.DebugOutputDir
+		if debugDir == "" {
+			debugDir = "test_data/api_debug"
+		}
+		panelClient.Debugger = NewDebugDumper(&DebugConfig{
+			Enable:    true,
+			OutputDir: debugDir,
+		})
+		logrus.WithField("dir", panelClient.Debugger.GetSessionDir()).Info("API Debug enabled")
 	}
 
 	// 如果启用自动注册

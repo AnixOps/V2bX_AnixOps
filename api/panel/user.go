@@ -87,6 +87,15 @@ func (c *Client) GetUserList() ([]UserInfo, error) {
 		}
 	}
 	c.userEtag = r.Header().Get("ETag")
+
+	// 调试: 保存用户列表
+	if c.Debugger != nil && c.Debugger.IsEnabled() {
+		userJSON, _ := json.Marshal(userlist)
+		if err := c.Debugger.DumpUserList(userJSON, c.NodeId); err != nil {
+			// 忽略调试错误
+		}
+	}
+
 	return userlist.Users, nil
 }
 
@@ -110,6 +119,13 @@ func (c *Client) GetUserAlive() (map[int]int, error) {
 	if err := json.Unmarshal(r.Body(), c.AliveMap); err != nil {
 		fmt.Printf("unmarshal user alive list error: %s", err)
 		c.AliveMap.Alive = make(map[int]int)
+	}
+
+	// 调试: 保存用户在线状态
+	if c.Debugger != nil && c.Debugger.IsEnabled() {
+		if err := c.Debugger.DumpUserAlive(r.Body(), c.NodeId); err != nil {
+			// 忽略调试错误
+		}
 	}
 
 	return c.AliveMap.Alive, nil
