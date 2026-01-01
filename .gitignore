@@ -18,3 +18,6 @@ newV2bX.sh
 quic_singbox.sh
 V2bX_windows_amd64.exe
 data/credential.json.enc
+test_data/
+test_data/*
+
