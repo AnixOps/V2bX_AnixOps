@@ -267,6 +267,9 @@ install_manage_script() {
     curl -fsSL "${RAW_SCRIPT_URL}" -o /usr/bin/V2bX
     chmod +x /usr/bin/V2bX
     ln -sf /usr/bin/V2bX /usr/bin/v2bx
+    # Ensure PATH-preferred /usr/local/bin also points to the menu wrapper.
+    ln -sf /usr/bin/V2bX /usr/local/bin/V2bX
+    ln -sf /usr/bin/V2bX /usr/local/bin/v2bx
 }
 
 restart_service() {

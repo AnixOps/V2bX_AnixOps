@@ -246,7 +246,7 @@ uninstall_v2bx() {
     fi
 
     rm -rf "${INSTALL_DIR}"
-    rm -f /usr/bin/V2bX /usr/bin/v2bx
+    rm -f /usr/bin/V2bX /usr/bin/v2bx /usr/local/bin/V2bX /usr/local/bin/v2bx
 
     if [[ "${purge_config}" == "true" ]]; then
         rm -rf "${CONFIG_DIR}"
