@@ -33,15 +33,15 @@ cleanup() {
 trap cleanup EXIT
 
 info() {
-    echo -e "${green}$*${plain}"
+    echo -e "${green}$*${plain}" >&2
 }
 
 warn() {
-    echo -e "${yellow}$*${plain}"
+    echo -e "${yellow}$*${plain}" >&2
 }
 
 error() {
-    echo -e "${red}$*${plain}"
+    echo -e "${red}$*${plain}" >&2
 }
 
 need_root() {
