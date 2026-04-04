@@ -45,6 +45,28 @@ V2bX_AnixOps/
 - Go 1.25+
 - 构建时需设置 `GOEXPERIMENT=jsonv2`
 
+## 一键安装（Linux）
+
+快速安装最新版：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/AnixOps/V2bX_AnixOps/dev_new/scripts/install.sh)
+```
+
+安装指定版本：
+
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/AnixOps/V2bX_AnixOps/dev_new/scripts/install.sh) v0.1.0
+```
+
+安装后管理命令：
+
+```bash
+V2bX start|stop|restart|status|log
+V2bX update [version]
+V2bX uninstall [--purge]
+```
+
 ## 快速开始
 
 ### 1. 准备配置
