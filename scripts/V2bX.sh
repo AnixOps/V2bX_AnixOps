@@ -229,6 +229,158 @@ edit_config() {
     "${editor}" "${cfg}"
 }
 
+json_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    printf '%s' "${s}"
+}
+
+prompt_text() {
+    local prompt="$1"
+    local default="${2:-}"
+    local value=""
+    if [[ -n "${default}" ]]; then
+        read -r -p "${prompt} [默认: ${default}]: " value
+        value="${value:-${default}}"
+    else
+        read -r -p "${prompt}: " value
+    fi
+    printf '%s' "${value}"
+}
+
+prompt_required_text() {
+    local prompt="$1"
+    local value=""
+    while true; do
+        read -r -p "${prompt}: " value
+        if [[ -n "${value}" ]]; then
+            printf '%s' "${value}"
+            return
+        fi
+        warn "该项不能为空，请重新输入"
+    done
+}
+
+prompt_int() {
+    local prompt="$1"
+    local default="${2:-}"
+    local value=""
+    while true; do
+        if [[ -n "${default}" ]]; then
+            read -r -p "${prompt} [默认: ${default}]: " value
+            value="${value:-${default}}"
+        else
+            read -r -p "${prompt}: " value
+        fi
+
+        if [[ "${value}" =~ ^[0-9]+$ ]]; then
+            printf '%s' "${value}"
+            return
+        fi
+        warn "请输入有效的整数"
+    done
+}
+
+init_config_wizard() {
+    local cfg="${CONFIG_DIR}/config.json"
+    local backup=""
+    local core_type api_host api_key node_id node_type timeout listen_ip send_ip cert_mode
+    local core_json
+
+    info "进入初始化配置向导（将写入 ${cfg}）"
+    mkdir -p "${CONFIG_DIR}"
+
+    if [[ -f "${cfg}" ]]; then
+        if ! confirm "检测到已有配置，是否覆盖？" "n"; then
+            warn "已取消初始化配置"
+            return 0
+        fi
+        backup="${cfg}.bak.$(date +%Y%m%d%H%M%S)"
+        cp -f "${cfg}" "${backup}"
+        info "已备份旧配置到 ${backup}"
+    fi
+
+    while true; do
+        core_type="$(prompt_text "选择内核类型(sing/xray/hysteria2)" "sing")"
+        core_type="$(echo "${core_type}" | tr '[:upper:]' '[:lower:]')"
+        if [[ "${core_type}" == "sing" || "${core_type}" == "xray" || "${core_type}" == "hysteria2" ]]; then
+            break
+        fi
+        warn "仅支持 sing / xray / hysteria2"
+    done
+
+    api_host="$(prompt_text "面板地址 ApiHost" "http://127.0.0.1")"
+    api_key="$(prompt_required_text "面板 API Key")"
+    node_id="$(prompt_int "节点 ID NodeID" "1")"
+    node_type="$(prompt_text "节点类型 NodeType(面板分类)" "v2ray")"
+    timeout="$(prompt_int "接口超时(秒)" "30")"
+    listen_ip="$(prompt_text "监听 IP ListenIP" "0.0.0.0")"
+    send_ip="$(prompt_text "发送 IP SendIP" "0.0.0.0")"
+    cert_mode="$(prompt_text "证书模式 CertMode(self/file/dns)" "self")"
+
+    case "${core_type}" in
+        sing)
+            core_json='{
+      "Type": "sing",
+      "Log": {
+        "Level": "info",
+        "Timestamp": true
+      },
+      "NTP": {
+        "Enable": false,
+        "Server": "time.apple.com",
+        "ServerPort": 0
+      }
+    }'
+            ;;
+        xray)
+            core_json='{
+      "Type": "xray"
+    }'
+            ;;
+        hysteria2)
+            core_json='{
+      "Type": "hysteria2"
+    }'
+            ;;
+    esac
+
+    cat >"${cfg}" <<EOF
+{
+  "Log": {
+    "Level": "info",
+    "Output": ""
+  },
+  "Cores": [
+    ${core_json}
+  ],
+  "Nodes": [
+    {
+      "Core": "$(json_escape "${core_type}")",
+      "ApiHost": "$(json_escape "${api_host}")",
+      "ApiKey": "$(json_escape "${api_key}")",
+      "NodeID": ${node_id},
+      "NodeType": "$(json_escape "${node_type}")",
+      "Timeout": ${timeout},
+      "ListenIP": "$(json_escape "${listen_ip}")",
+      "SendIP": "$(json_escape "${send_ip}")",
+      "DeviceOnlineMinTraffic": 200,
+      "MinReportTraffic": 0,
+      "CertConfig": {
+        "CertMode": "$(json_escape "${cert_mode}")"
+      }
+    }
+  ]
+}
+EOF
+
+    chmod 600 "${cfg}" || true
+    info "配置初始化完成: ${cfg}"
+    info "默认仍使用: ${BIN_PATH} server -c ${cfg}"
+}
+
 uninstall_v2bx() {
     local purge_config="false"
     if [[ "${1:-}" == "--purge" ]]; then
@@ -291,6 +443,7 @@ V2bX 管理脚本
 Usage:
   ${CMD_NAME}                     # 进入菜单
   ${CMD_NAME} menu                # 进入菜单
+  ${CMD_NAME} initconfig
   ${CMD_NAME} start
   ${CMD_NAME} stop
   ${CMD_NAME} restart
@@ -328,9 +481,10 @@ menu_header() {
     echo "11. 安装/重装 V2bX"
     echo "12. 卸载 V2bX（保留配置）"
     echo "13. 卸载 V2bX（删除配置）"
-    echo "14. 生成 x25519 密钥"
-    echo "15. 生成配置模板"
-    echo "16. 查看版本"
+    echo "14. 初始化配置向导"
+    echo "15. 生成 x25519 密钥"
+    echo "16. 生成配置模板"
+    echo "17. 查看版本"
     echo " 0. 退出"
     echo
 }
@@ -339,7 +493,7 @@ run_menu() {
     local choice version
     while true; do
         menu_header
-        read -r -p "请输入选项 [0-16]: " choice
+        read -r -p "请输入选项 [0-17]: " choice
         case "${choice}" in
             1) execute_command "start" || true ;;
             2) execute_command "stop" || true ;;
@@ -369,9 +523,10 @@ run_menu() {
                     execute_command "uninstall" "--purge" || true
                 fi
                 ;;
-            14) execute_command "x25519" || true ;;
-            15) execute_command "generate" || true ;;
-            16) execute_command "version" || true ;;
+            14) execute_command "initconfig" || true ;;
+            15) execute_command "x25519" || true ;;
+            16) execute_command "generate" || true ;;
+            17) execute_command "version" || true ;;
             0) exit 0 ;;
             *)
                 warn "无效选项：${choice}"
@@ -426,6 +581,9 @@ execute_command() {
             ;;
         config)
             edit_config
+            ;;
+        initconfig)
+            init_config_wizard
             ;;
         install)
             run_install_script "${1:-}"

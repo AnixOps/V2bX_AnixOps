@@ -346,6 +346,7 @@ main() {
     echo
     info "安装完成。常用命令："
     echo "  ${MANAGE_CMD_NAME} start|stop|restart|status|log"
+    echo "  ${MANAGE_CMD_NAME} initconfig"
     echo "  ${MANAGE_CMD_NAME} update [version]"
     echo "  ${MANAGE_CMD_NAME} uninstall [--purge]"
 }
