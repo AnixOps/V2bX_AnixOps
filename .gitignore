@@ -21,3 +21,7 @@ data/credential.json.enc
 test_data/
 test_data/*
 
+# Local editor/agent metadata
+.vscode/
+.claude/
+
