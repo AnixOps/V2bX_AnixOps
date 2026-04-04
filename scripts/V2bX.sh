@@ -17,6 +17,7 @@ INSTALL_DIR="/usr/local/V2bX"
 BIN_PATH="${INSTALL_DIR}/V2bX"
 CONFIG_DIR="/etc/V2bX"
 INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/scripts/install.sh"
+CMD_NAME="v2bx-anixops"
 
 info() {
     echo -e "${green}$*${plain}"
@@ -246,7 +247,7 @@ uninstall_v2bx() {
     fi
 
     rm -rf "${INSTALL_DIR}"
-    rm -f /usr/bin/V2bX /usr/bin/v2bx /usr/local/bin/V2bX /usr/local/bin/v2bx
+    rm -f "/usr/bin/${CMD_NAME}" "/usr/local/bin/${CMD_NAME}"
 
     if [[ "${purge_config}" == "true" ]]; then
         rm -rf "${CONFIG_DIR}"
@@ -282,28 +283,28 @@ print_service_summary() {
 }
 
 show_help() {
-    cat <<'EOF'
+    cat <<EOF
 V2bX 管理脚本
 
 无参数运行时进入可视化菜单。
 
 Usage:
-  V2bX                     # 进入菜单
-  V2bX menu                # 进入菜单
-  V2bX start
-  V2bX stop
-  V2bX restart
-  V2bX status
-  V2bX enable
-  V2bX disable
-  V2bX log
-  V2bX config
-  V2bX update [version]
-  V2bX install [version]
-  V2bX uninstall [--purge]
-  V2bX version
-  V2bX x25519
-  V2bX generate
+  ${CMD_NAME}                     # 进入菜单
+  ${CMD_NAME} menu                # 进入菜单
+  ${CMD_NAME} start
+  ${CMD_NAME} stop
+  ${CMD_NAME} restart
+  ${CMD_NAME} status
+  ${CMD_NAME} enable
+  ${CMD_NAME} disable
+  ${CMD_NAME} log
+  ${CMD_NAME} config
+  ${CMD_NAME} update [version]
+  ${CMD_NAME} install [version]
+  ${CMD_NAME} uninstall [--purge]
+  ${CMD_NAME} version
+  ${CMD_NAME} x25519
+  ${CMD_NAME} generate
 EOF
 }
 

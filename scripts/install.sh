@@ -16,6 +16,7 @@ SERVICE_NAME="V2bX"
 INSTALL_DIR="/usr/local/${APP_NAME}"
 CONFIG_DIR="/etc/${APP_NAME}"
 BIN_PATH="${INSTALL_DIR}/${APP_NAME}"
+MANAGE_CMD_NAME="v2bx-anixops"
 
 API_BASE="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}"
 RELEASE_BASE="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/download"
@@ -263,13 +264,11 @@ EOF
 }
 
 install_manage_script() {
-    info "安装管理脚本 /usr/bin/V2bX ..."
-    curl -fsSL "${RAW_SCRIPT_URL}" -o /usr/bin/V2bX
-    chmod +x /usr/bin/V2bX
-    ln -sf /usr/bin/V2bX /usr/bin/v2bx
-    # Ensure PATH-preferred /usr/local/bin also points to the menu wrapper.
-    ln -sf /usr/bin/V2bX /usr/local/bin/V2bX
-    ln -sf /usr/bin/V2bX /usr/local/bin/v2bx
+    info "安装管理脚本 /usr/bin/${MANAGE_CMD_NAME} ..."
+    curl -fsSL "${RAW_SCRIPT_URL}" -o /usr/bin/${MANAGE_CMD_NAME}
+    chmod +x /usr/bin/${MANAGE_CMD_NAME}
+    # Ensure PATH-preferred /usr/local/bin points to the AnixOps wrapper.
+    ln -sf /usr/bin/${MANAGE_CMD_NAME} /usr/local/bin/${MANAGE_CMD_NAME}
 }
 
 restart_service() {
@@ -338,7 +337,7 @@ main() {
 
     if [[ "${first_install}" == "true" ]]; then
         warn "检测到首次安装，已写入默认配置：${CONFIG_DIR}/config.json"
-        warn "请先修改配置后再启动：V2bX start"
+        warn "请先修改配置后再启动：${MANAGE_CMD_NAME} start"
     else
         info "检测到已有配置，尝试重启服务..."
         restart_service
@@ -346,9 +345,9 @@ main() {
 
     echo
     info "安装完成。常用命令："
-    echo "  V2bX start|stop|restart|status|log"
-    echo "  V2bX update [version]"
-    echo "  V2bX uninstall [--purge]"
+    echo "  ${MANAGE_CMD_NAME} start|stop|restart|status|log"
+    echo "  ${MANAGE_CMD_NAME} update [version]"
+    echo "  ${MANAGE_CMD_NAME} uninstall [--purge]"
 }
 
 main "$@"
