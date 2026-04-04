@@ -1,89 +1,114 @@
-# V2bX
+# V2bX AnixOps
 
-[![](https://img.shields.io/badge/TgChat-UnOfficialV2Board%E4%BA%A4%E6%B5%81%E7%BE%A4-green)](https://t.me/unofficialV2board)
-[![](https://img.shields.io/badge/TgChat-YuzukiProjects%E4%BA%A4%E6%B5%81%E7%BE%A4-blue)](https://t.me/YuzukiProjects)
+V2bX AnixOps 是 AnixOps 维护的 V2Board 节点端后端程序（Fork 自 [wyx2685/V2bX](https://github.com/wyx2685/V2bX)）。
 
-A V2board node server based on multi core, modified from XrayR.  
-一个基于多种内核的V2board节点服务端，修改自XrayR，支持V2ay,Trojan,Shadowsocks协议。
+- 节点端仓库: [AnixOps/V2bX_AnixOps](https://github.com/AnixOps/V2bX_AnixOps)
+- 面板端仓库: [AnixOps/v2board_AnixOps](https://github.com/AnixOps/v2board_AnixOps)
+- 上游仓库: [wyx2685/V2bX](https://github.com/wyx2685/V2bX)
 
-**注意： 本项目需要搭配[修改版V2board](https://github.com/wyx2685/v2board)**
+## 项目概述
 
-## 特点
+本项目用于对接 V2Board 面板，支持节点配置同步、用户认证、流量统计、在线设备上报、证书管理等能力。
 
-* 永久开源且免费。
-* 支持Vmess/Vless, Trojan， Shadowsocks, Hysteria1/2多种协议。
-* 支持Vless和XTLS等新特性。
-* 支持单实例对接多节点，无需重复启动。
-* 支持限制在线IP。
-* 支持限制Tcp连接数。
-* 支持节点端口级别、用户级别限速。
-* 配置简单明了。
-* 修改配置自动重启实例。
-* 支持多种内核，易扩展。
-* 支持条件编译，可仅编译需要的内核。
+支持多内核：
+- Xray-core
+- Sing-box
+- Hysteria2
 
-## 功能介绍
+## 主要特性
 
-| 功能        | v2ray | trojan | shadowsocks | hysteria1/2 |
-|-----------|-------|--------|-------------|----------|
-| 自动申请tls证书 | √     | √      | √           | √        |
-| 自动续签tls证书 | √     | √      | √           | √        |
-| 在线人数统计    | √     | √      | √           | √        |
-| 审计规则      | √     | √      | √           | √         |
-| 自定义DNS    | √     | √      | √           | √        |
-| 在线IP数限制   | √     | √      | √           | √        |
-| 连接数限制     | √     | √      | √           | √         |
-| 跨节点IP数限制  |√      |√       |√            |√          |
-| 按照用户限速    | √     | √      | √           | √         |
-| 动态限速(未测试) | √     | √      | √           | √         |
+- 多内核统一管理（Xray / Sing-box / Hysteria2）
+- 支持多协议（VMess / VLESS / Trojan / Shadowsocks / Hysteria2 等）
+- 用户流量与在线 IP 统计上报
+- 节点限流、设备数限制、动态限速
+- 自动注册、签名鉴权、凭证加密存储
+- ACME 证书管理与续期
+- 支持 Linux / Windows / macOS
 
-## TODO
+## 目录结构
 
-- [ ] 重新实现动态限速
-- [ ] 完善使用文档
-
-## 软件安装
-
-### 一键安装
-
-```
-wget -N https://raw.githubusercontent.com/wyx2685/V2bX-script/master/install.sh && bash install.sh
+```text
+V2bX_AnixOps/
+├── api/                # 面板 API 客户端
+├── cmd/                # CLI 入口与子命令
+├── conf/               # 配置结构体定义
+├── core/               # 各内核实现（xray/sing/hy2）
+├── node/               # 节点控制器与定时任务
+├── limiter/            # 限流实现
+├── common/             # 通用工具
+├── docs/               # 项目文档
+└── example/            # 配置示例
 ```
 
-### 手动安装
+## 环境要求
 
-[手动安装教程](https://v2bx.v-50.me/v2bx/v2bx-xia-zai-he-an-zhuang/install/manual)
+- Go 1.25+
+- 构建时需设置 `GOEXPERIMENT=jsonv2`
 
-## 构建
-``` bash
-# 通过-tags选项指定要编译的内核， 可选 xray， sing, hysteria2
-GOEXPERIMENT=jsonv2 go build -v -o build_assets/V2bX -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath -ldflags "-X 'github.com/InazumaV/V2bX/cmd.version=$version' -s -w -buildid="
+## 快速开始
+
+### 1. 准备配置
+
+参考示例配置：`example/config.json`
+
+### 2. 构建
+
+Linux/macOS:
+
+```bash
+export GOEXPERIMENT=jsonv2
+export CGO_ENABLED=0
+go build -v -o V2bX -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath
 ```
 
-## 配置文件及详细使用教程
+Windows (PowerShell):
 
-[详细使用教程](https://v2bx.v-50.me/)
+```powershell
+$env:GOEXPERIMENT="jsonv2"
+$env:CGO_ENABLED="0"
+go build -v -o V2bX.exe -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath
+```
 
-## 免责声明
+或直接使用仓库脚本：
+- Linux/macOS: `./build.sh`
+- Windows: `./build.ps1`
 
-* 此项目用于本人自用，因此本人不能保证向后兼容性。
-* 由于本人能力有限，不能保证所有功能的可用性，如果出现问题请在Issues反馈。
-* 本人不对任何人使用本项目造成的任何后果承担责任。
-* 本人比较多变，因此本项目可能会随想法或思路的变动随性更改项目结构或大规模重构代码，若不能接受请勿使用。
+### 3. 运行
 
-## 赞助
+```bash
+V2bX server -c /etc/V2bX/config.json
+```
 
-[赞助链接](https://v-50.me/)
+Windows:
 
-## Thanks
+```powershell
+.\V2bX.exe server -c .\config.json
+```
 
-* [Project X](https://github.com/XTLS/)
-* [V2Fly](https://github.com/v2fly)
-* [VNet-V2ray](https://github.com/ProxyPanel/VNet-V2ray)
-* [Air-Universe](https://github.com/crossfw/Air-Universe)
-* [XrayR](https://github.com/XrayR/XrayR)
-* [sing-box](https://github.com/SagerNet/sing-box)
+## 与面板对接
 
-## Stars 增长记录
+默认对接 API（示例）：
+- `GET /api/v2/server/UniProxy/config`
+- `GET /api/v2/server/UniProxy/user`
+- `POST /api/v2/server/UniProxy/push`
+- `POST /api/v2/server/UniProxy/alive`
 
-[![Stargazers over time](https://starchart.cc/wyx2685/V2bX.svg)](https://starchart.cc/wyx2685/V2bX)
+请确保面板端版本与本仓库对应，优先使用：
+[AnixOps/v2board_AnixOps](https://github.com/AnixOps/v2board_AnixOps)
+
+## 文档
+
+- [API 文档](./docs/API_DOCUMENTATION.md)
+- [后端 API 问题分析](./docs/BACKEND_API_ISSUES.md)
+- `docs/PROTOCOL_CONFIG_*.md` 协议配置规范
+
+## 贡献
+
+欢迎通过 Issue / PR 提交问题与改进建议。
+
+## 致谢
+
+- [Project X](https://github.com/XTLS/)
+- [V2Fly](https://github.com/v2fly)
+- [XrayR](https://github.com/XrayR/XrayR)
+- [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
