@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	stdnet "net"
 	"strings"
 	"time"
 
@@ -13,7 +14,7 @@ import (
 
 	"github.com/InazumaV/V2bX/api/panel"
 	"github.com/InazumaV/V2bX/conf"
-	"github.com/xtls/xray-core/common/net"
+	xnet "github.com/xtls/xray-core/common/net"
 	"github.com/xtls/xray-core/core"
 	coreConf "github.com/xtls/xray-core/infra/conf"
 )
@@ -53,7 +54,7 @@ func buildInbound(option *conf.Options, nodeInfo *panel.NodeInfo, tag string) (*
 			}},
 	}
 	// Set Listen IP address
-	ipAddress := net.ParseAddress(option.ListenIP)
+	ipAddress := xnet.ParseAddress(option.ListenIP)
 	in.ListenOn = &coreConf.Address{Address: ipAddress}
 	// Set SniffingConfig
 	sniffingConfig := &coreConf.SniffingConfig{
@@ -125,14 +126,23 @@ func buildInbound(option *conf.Options, nodeInfo *panel.NodeInfo, tag string) (*
 		if dest == "" {
 			dest = v.TlsSettings.ServerName
 		}
+		dest = strings.TrimSpace(dest)
+		serverPort := strings.TrimSpace(v.TlsSettings.ServerPort)
+		if serverPort != "" {
+			if _, _, err := stdnet.SplitHostPort(dest); err != nil {
+				dest = stdnet.JoinHostPort(dest, serverPort)
+			}
+		} else {
+			if _, _, err := stdnet.SplitHostPort(dest); err != nil {
+				dest = stdnet.JoinHostPort(dest, "443")
+			}
+		}
+
 		xver := v.TlsSettings.Xver
 		if xver == 0 {
 			xver = v.RealityConfig.Xver
 		}
-		d, err := json.Marshal(fmt.Sprintf(
-			"%s:%s",
-			dest,
-			v.TlsSettings.ServerPort))
+		d, err := json.Marshal(dest)
 		if err != nil {
 			return nil, fmt.Errorf("marshal reality dest error: %s", err)
 		}

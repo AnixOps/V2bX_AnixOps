@@ -208,25 +208,41 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 		"node_type": baseInfo.NodeType,
 	}).Debug("Parsed node type fields")
 
-	// 优先使用 type，如果为空则使用 node_type
-	nodeType := strings.ToLower(baseInfo.Type)
-	if nodeType == "" {
-		nodeType = strings.ToLower(baseInfo.NodeType)
+	// 彻底分离 node_type 和 type
+	// node_type 是节点分类 (node, vmess, vless 等)
+	// type 是具体协议 (vmess, vless, trojan 等)
+	nodeCategory := strings.ToLower(baseInfo.NodeType)
+	protocolType := strings.ToLower(baseInfo.Type)
+
+	// 兼容逻辑：如果其中一个为空，尝试互相补充
+	if nodeCategory == "" && protocolType != "" {
+		nodeCategory = protocolType
+	} else if protocolType == "" && nodeCategory != "" {
+		protocolType = nodeCategory
 	}
-	if nodeType == "" {
+
+	if nodeCategory == "" {
 		return nil, fmt.Errorf("node type not found in response, raw: %s", string(r.Body()))
 	}
-	// 规范化节点类型
-	switch nodeType {
-	case "v2ray":
-		nodeType = "vmess"
+
+	// 规范化
+	if protocolType == "v2ray" {
+		protocolType = "vmess"
 	}
-	// 更新客户端的 NodeType
-	c.NodeType = nodeType
+	if nodeCategory == "v2ray" {
+		nodeCategory = "vmess"
+	}
+
+	// 更新客户端状态
+	c.NodeType = nodeCategory
+	c.ProtocolType = protocolType
+
+	// 更新全局查询参数，确保后续请求带上 node_type
+	c.client.SetQueryParam("node_type", c.NodeType)
 
 	node = &NodeInfo{
 		Id:   c.NodeId,
-		Type: nodeType,
+		Type: protocolType,
 		RawDNS: RawDNS{
 			DNSMap:  make(map[string]map[string]interface{}),
 			DNSJson: []byte(""),
@@ -234,7 +250,7 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 	}
 	// parse protocol params
 	var cm *CommonNode
-	switch nodeType {
+	switch protocolType {
 	case "vmess", "vless":
 		rsp := &VAllssNode{}
 		err = json.Unmarshal(r.Body(), rsp)
