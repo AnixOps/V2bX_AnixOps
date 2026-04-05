@@ -371,3 +371,31 @@ V2bX server -c /etc/V2bX/config.json
   - Linux/macOS: `api/grpc/gen.sh`
   - Windows: `api/grpc/gen.ps1`
 - 生成输出目录：`api/grpc/v2boardpb/`
+
+### 运维约定与常见检查项
+
+本仓库 gRPC 接入后，建议在日常运维/排障时按以下顺序检查：
+
+验证编译（避免环境 `go.work` 干扰）：
+
+```bash
+GOEXPERIMENT=jsonv2 GOWORK=off go test -run TestNonExistent ./...
+```
+
+Proto 生成一致性检查（开发机/CI 都适用）：
+
+```bash
+bash api/grpc/gen.sh
+git diff -- api/grpc/v2boardpb
+```
+
+gRPC 配置检查要点：
+
+- `Transport` 必须为 `grpc`
+- `GRPCHost` 推荐显式填写 `host:port`，避免依赖 `ApiHost` 推断
+- TLS 场景下：`GRPCUseTLS=true`，`GRPCServerName` 填真实域名（证书校验用）
+- keepalive：`GRPCKeepalive` 为秒，默认 `30`
+
+说明：
+
+- WebSocket SyncManager 当前只在 REST(`http`) 传输下启用；`grpc` 传输使用定时轮询与上报任务。

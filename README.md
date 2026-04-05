@@ -175,3 +175,21 @@ Proto and codegen:
 - Proto source: `api/grpc/v2board.proto`
 - Regenerate stubs (Linux/macOS): `bash api/grpc/gen.sh`
 - Regenerate stubs (Windows): `powershell -ExecutionPolicy Bypass -File api/grpc/gen.ps1`
+
+### initconfig (gRPC)
+
+If you use the AnixOps visual CLI (`v2bx-anixops`), you can initialize config with the wizard:
+
+```bash
+v2bx-anixops initconfig
+```
+
+When selecting `Transport=grpc`, fill these fields (matching `conf.ApiConfig`):
+
+- `ApiHost`: panel URL (example: `https://panel.example.com`)
+- `GRPCHost`: gRPC target `host:port` (example: `panel.example.com:443`)
+- `GRPCUseTLS`: `true` if using TLS
+- `GRPCServerName`: TLS SNI / cert verification hostname (often same as domain)
+- `GRPCKeepalive`: keepalive seconds (default `30`)
+
+Other required fields are still the same (for example `NodeID`, `ApiKey`, `NodeType`).
