@@ -1,7 +1,9 @@
 package node
 
 import (
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/InazumaV/V2bX/api/panel"
 	"github.com/InazumaV/V2bX/common/task"
@@ -25,6 +27,7 @@ type Controller struct {
 	renewCertPeriodic         *task.Task
 	dynamicSpeedLimitPeriodic *task.Task
 	onlineIpReportPeriodic    *task.Task
+	syncManager               *SyncManager
 	*conf.Options
 }
 
@@ -93,11 +96,26 @@ func (c *Controller) Start() error {
 	log.WithField("tag", c.tag).Infof("Added %d new users", added)
 	c.info = node
 	c.startTasks(node)
+
+	c.syncManager = NewSyncManager(c.apiClient, c, c.buildSyncConfig())
+	if err := c.syncManager.Start(); err != nil {
+		c.syncManager = nil
+		return fmt.Errorf("start sync manager error: %w", err)
+	}
+
 	return nil
 }
 
 // Close implement the Close() function of the service interface
 func (c *Controller) Close() error {
+	var closeErr error
+	if c.syncManager != nil {
+		if err := c.syncManager.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("close sync manager error: %w", err))
+		}
+		c.syncManager = nil
+	}
+
 	limiter.DeleteLimiter(c.tag)
 	if c.nodeInfoMonitorPeriodic != nil {
 		c.nodeInfoMonitorPeriodic.Close()
@@ -114,15 +132,56 @@ func (c *Controller) Close() error {
 	if c.onlineIpReportPeriodic != nil {
 		c.onlineIpReportPeriodic.Close()
 	}
-	err := c.server.DelNode(c.tag)
-	if err != nil {
-		return fmt.Errorf("del node error: %s", err)
+	if err := c.server.DelNode(c.tag); err != nil {
+		closeErr = errors.Join(closeErr, fmt.Errorf("del node error: %w", err))
 	}
-	return nil
+	return closeErr
 }
 
 func (c *Controller) buildNodeTag(node *panel.NodeInfo) string {
 	return fmt.Sprintf("[%s]-%s:%d", c.apiClient.APIHost, node.Type, node.Id)
+}
+
+func (c *Controller) buildSyncConfig() *SyncConfig {
+	if c.Options == nil || c.Options.SyncConfig == nil {
+		return DefaultSyncConfig()
+	}
+
+	config := DefaultSyncConfig()
+	syncConfig := c.Options.SyncConfig
+
+	config.EnableWebSocket = syncConfig.EnableWebSocket
+	if syncConfig.WSEndpoint != "" {
+		config.WSEndpoint = syncConfig.WSEndpoint
+	}
+	if len(syncConfig.WSEndpointFallbacks) > 0 {
+		config.WSEndpointFallbacks = syncConfig.WSEndpointFallbacks
+	}
+	if syncConfig.ReconnectInterval > 0 {
+		config.ReconnectInterval = time.Duration(syncConfig.ReconnectInterval) * time.Second
+	}
+	config.MaxReconnectTries = syncConfig.MaxReconnectTries
+
+	if syncConfig.PingInterval > 0 {
+		config.PingInterval = time.Duration(syncConfig.PingInterval) * time.Second
+	}
+	if syncConfig.PongTimeout > 0 {
+		config.PongTimeout = time.Duration(syncConfig.PongTimeout) * time.Second
+	}
+	if syncConfig.AckTimeout > 0 {
+		config.AckTimeout = time.Duration(syncConfig.AckTimeout) * time.Second
+	}
+	if syncConfig.BufferSize > 0 {
+		config.BufferSize = syncConfig.BufferSize
+	}
+	config.AckRetries = syncConfig.AckRetries
+
+	config.EnableFallback = syncConfig.EnableFallback
+	if syncConfig.FallbackInterval > 0 {
+		config.FallbackInterval = time.Duration(syncConfig.FallbackInterval) * time.Second
+	}
+
+	return config
 }
 
 // reloadNode 重载节点配置 (用于同步管理器)

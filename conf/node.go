@@ -27,29 +27,30 @@ type ApiConfig struct {
 	APIHost      string `json:"ApiHost"`
 	APISendIP    string `json:"ApiSendIP"`
 	NodeID       int    `json:"NodeID"`
+	NodeType     string `json:"NodeType"`
 	Key          string `json:"ApiKey"`
 	Timeout      int    `json:"Timeout"`
 	RuleListPath string `json:"RuleListPath"`
 
-	// 自动发现相关配置
-	AuthKey           string `json:"AuthKey"`           // 授权密钥 (首次注册使用)
-	NodeName          string `json:"NodeName"`          // 节点名称
-	NodeHost          string `json:"NodeHost"`          // 节点地址 (可选，默认使用客户端IP)
-	NodePort          int    `json:"NodePort"`          // API端口 (默认443)
-	CredentialFile    string `json:"CredentialFile"`    // 凭证存储路径
-	HeartbeatInterval int    `json:"HeartbeatInterval"` // 心跳间隔 (秒，默认60)
-	AutoRegister      bool   `json:"AutoRegister"`      // 是否启用自动注册
+	// 鑷姩鍙戠幇鐩稿叧閰嶇疆
+	AuthKey           string `json:"AuthKey"`           // 鎺堟潈瀵嗛挜 (棣栨娉ㄥ唽浣跨敤)
+	NodeName          string `json:"NodeName"`          // 鑺傜偣鍚嶇О
+	NodeHost          string `json:"NodeHost"`          // 鑺傜偣鍦板潃 (鍙€夛紝榛樿浣跨敤瀹㈡埛绔疘P)
+	NodePort          int    `json:"NodePort"`          // API绔彛 (榛樿443)
+	CredentialFile    string `json:"CredentialFile"`    // 鍑瘉瀛樺偍璺緞
+	HeartbeatInterval int    `json:"HeartbeatInterval"` // 蹇冭烦闂撮殧 (绉掞紝榛樿60)
+	AutoRegister      bool   `json:"AutoRegister"`      // 鏄惁鍚敤鑷姩娉ㄥ唽
 
-	// 安全增强配置
-	EnableSign        bool `json:"EnableSign"`        // 是否启用请求签名 (默认true)
-	EncryptCredential bool `json:"EncryptCredential"` // 是否加密存储凭证 (默认true)
+	// 瀹夊叏澧炲己閰嶇疆
+	EnableSign        bool `json:"EnableSign"`        // 鏄惁鍚敤璇锋眰绛惧悕 (榛樿true)
+	EncryptCredential bool `json:"EncryptCredential"` // 鏄惁鍔犲瘑瀛樺偍鍑瘉 (榛樿true)
 
-	// 调试配置
-	EnableDebug    bool   `json:"EnableDebug"`    // 是否启用 API 调试
-	DebugOutputDir string `json:"DebugOutputDir"` // 调试输出目录 (默认 test_data/api_debug)
+	// 璋冭瘯閰嶇疆
+	EnableDebug    bool   `json:"EnableDebug"`    // 鏄惁鍚敤 API 璋冭瘯
+	DebugOutputDir string `json:"DebugOutputDir"` // 璋冭瘯杈撳嚭鐩綍 (榛樿 test_data/api_debug)
 
-	// 运行时参数 (不从配置文件读取)
-	ForceReRegister bool `json:"-"` // 强制重新注册 (命令行参数)
+	// 杩愯鏃跺弬鏁?(涓嶄粠閰嶇疆鏂囦欢璇诲彇)
+	ForceReRegister bool `json:"-"` // 寮哄埗閲嶆柊娉ㄥ唽 (鍛戒护琛屽弬鏁?
 }
 
 func (n *NodeConfig) UnmarshalJSON(data []byte) (err error) {
@@ -140,38 +141,43 @@ type Options struct {
 	SyncConfig             *SyncConfig     `json:"SyncConfig"`
 }
 
-// SyncConfig 同步配置
+// SyncConfig 鍚屾閰嶇疆
 type SyncConfig struct {
-	// WebSocket 配置
-	EnableWebSocket   bool   `json:"EnableWebSocket"`
-	WSEndpoint        string `json:"WSEndpoint"`
-	ReconnectInterval int    `json:"ReconnectInterval"` // 秒
-	MaxReconnectTries int    `json:"MaxReconnectTries"` // 0 = 无限重试
+	// WebSocket 閰嶇疆
+	EnableWebSocket     bool     `json:"EnableWebSocket"`
+	WSEndpoint          string   `json:"WSEndpoint"`
+	WSEndpointFallbacks []string `json:"WSEndpointFallbacks,omitempty"`
+	ReconnectInterval   int      `json:"ReconnectInterval"` // 绉?
+	MaxReconnectTries   int      `json:"MaxReconnectTries"` // 0 = 鏃犻檺閲嶈瘯
 
-	// 心跳配置
-	PingInterval int `json:"PingInterval"` // 秒
-	PongTimeout  int `json:"PongTimeout"`  // 秒
-
-	// 消息配置
-	AckTimeout int `json:"AckTimeout"` // 秒
+	// 蹇冭烦閰嶇疆
+	PingInterval int `json:"PingInterval"` // 绉?
+	PongTimeout  int `json:"PongTimeout"`  // 绉?
+	// 娑堟伅閰嶇疆
+	AckTimeout int `json:"AckTimeout"` // 绉?
 	BufferSize int `json:"BufferSize"`
+	AckRetries int `json:"AckRetries"`
 
-	// 降级配置
+	// 闄嶇骇閰嶇疆
 	EnableFallback   bool `json:"EnableFallback"`
-	FallbackInterval int  `json:"FallbackInterval"` // 秒
+	FallbackInterval int  `json:"FallbackInterval"` // 绉?
 }
 
-// NewSyncConfig 创建默认同步配置
+// NewSyncConfig 鍒涘缓榛樿鍚屾閰嶇疆
 func NewSyncConfig() *SyncConfig {
 	return &SyncConfig{
-		EnableWebSocket:   false, // 默认不启用，等后端支持后启用
-		WSEndpoint:        "/api/v2/node/ws",
+		EnableWebSocket: false, // 榛樿涓嶅惎鐢紝绛夊悗绔敮鎸佸悗鍚敤
+		WSEndpoint:      "/api/v2/agent/ws",
+		WSEndpointFallbacks: []string{
+			"/api/v2/node/ws",
+		},
 		ReconnectInterval: 5,
 		MaxReconnectTries: 0,
 		PingInterval:      30,
 		PongTimeout:       10,
 		AckTimeout:        5,
 		BufferSize:        100,
+		AckRetries:        2,
 		EnableFallback:    true,
 		FallbackInterval:  60,
 	}

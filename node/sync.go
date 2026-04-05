@@ -19,7 +19,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// SyncState 同步状态
+// SyncState 鍚屾鐘舵€?
 type SyncState int32
 
 const (
@@ -47,74 +47,78 @@ func (s SyncState) String() string {
 	}
 }
 
-// SyncConfig 同步配置
+// SyncConfig 鍚屾閰嶇疆
 type SyncConfig struct {
-	// WebSocket 配置
-	EnableWebSocket   bool          `json:"EnableWebSocket"`
-	WSEndpoint        string        `json:"WSEndpoint"`
-	ReconnectInterval time.Duration `json:"ReconnectInterval"`
-	MaxReconnectTries int           `json:"MaxReconnectTries"` // 0 = 无限重试
+	// WebSocket 閰嶇疆
+	EnableWebSocket     bool          `json:"EnableWebSocket"`
+	WSEndpoint          string        `json:"WSEndpoint"`
+	WSEndpointFallbacks []string      `json:"WSEndpointFallbacks,omitempty"`
+	ReconnectInterval   time.Duration `json:"ReconnectInterval"`
+	MaxReconnectTries   int           `json:"MaxReconnectTries"` // 0 = 鏃犻檺閲嶈瘯
 
-	// 心跳配置
+	// 蹇冭烦閰嶇疆
 	PingInterval time.Duration `json:"PingInterval"`
 	PongTimeout  time.Duration `json:"PongTimeout"`
 
-	// 消息配置
+	// 娑堟伅閰嶇疆
 	AckTimeout time.Duration `json:"AckTimeout"`
 	BufferSize int           `json:"BufferSize"`
+	AckRetries int           `json:"AckRetries"`
 
-	// 降级配置
+	// 闄嶇骇閰嶇疆
 	EnableFallback   bool          `json:"EnableFallback"`
 	FallbackInterval time.Duration `json:"FallbackInterval"`
 }
 
-// DefaultSyncConfig 默认同步配置
+// DefaultSyncConfig 榛樿鍚屾閰嶇疆
 func DefaultSyncConfig() *SyncConfig {
 	return &SyncConfig{
-		EnableWebSocket:   true,
-		WSEndpoint:        "/api/v2/node/ws",
-		ReconnectInterval: 5 * time.Second,
-		MaxReconnectTries: 0,
-		PingInterval:      30 * time.Second,
-		PongTimeout:       10 * time.Second,
-		AckTimeout:        5 * time.Second,
-		BufferSize:        100,
-		EnableFallback:    true,
-		FallbackInterval:  60 * time.Second,
+		EnableWebSocket:     true,
+		WSEndpoint:          "/api/v2/agent/ws",
+		WSEndpointFallbacks: []string{"/api/v2/node/ws"},
+		ReconnectInterval:   5 * time.Second,
+		MaxReconnectTries:   0,
+		PingInterval:        30 * time.Second,
+		PongTimeout:         10 * time.Second,
+		AckTimeout:          5 * time.Second,
+		BufferSize:          100,
+		AckRetries:          2,
+		EnableFallback:      true,
+		FallbackInterval:    60 * time.Second,
 	}
 }
 
-// SyncManager 同步管理器
+// SyncManager 鍚屾绠＄悊鍣?
 type SyncManager struct {
 	client     *panel.Client
 	controller *Controller
 	config     *SyncConfig
 
-	// WebSocket 连接
+	// WebSocket 杩炴帴
 	conn   *websocket.Conn
 	connMu sync.RWMutex
 
-	// 状态
+	// 鐘舵€?
 	state        int32 // atomic
 	reconnecting int32 // atomic
 
-	// 消息通道
+	// 娑堟伅閫氶亾
 	inbound  chan *panel.SyncMessage
 	outbound chan *panel.SyncMessage
 
-	// 待确认消息
+	// 寰呯‘璁ゆ秷鎭?
 	pendingAcks sync.Map // map[msgID]*pendingAck
 
-	// 统计
+	// 缁熻
 	stats *SyncStats
 
-	// 生命周期
+	// 鐢熷懡鍛ㄦ湡
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
-// SyncStats 同步统计
+// SyncStats 鍚屾缁熻
 type SyncStats struct {
 	MessagesReceived int64
 	MessagesSent     int64
@@ -124,7 +128,7 @@ type SyncStats struct {
 	CurrentLatency   int64 // ms
 }
 
-// pendingAck 待确认消息
+// pendingAck 寰呯‘璁ゆ秷鎭?
 type pendingAck struct {
 	msg     *panel.SyncMessage
 	sentAt  time.Time
@@ -132,7 +136,7 @@ type pendingAck struct {
 	timeout time.Duration
 }
 
-// NewSyncManager 创建同步管理器
+// NewSyncManager 鍒涘缓鍚屾绠＄悊鍣?
 func NewSyncManager(client *panel.Client, controller *Controller, config *SyncConfig) *SyncManager {
 	if config == nil {
 		config = DefaultSyncConfig()
@@ -152,7 +156,7 @@ func NewSyncManager(client *panel.Client, controller *Controller, config *SyncCo
 	}
 }
 
-// Start 启动同步管理器
+// Start 鍚姩鍚屾绠＄悊鍣?
 func (sm *SyncManager) Start() error {
 	if !sm.config.EnableWebSocket {
 		log.Info("WebSocket sync disabled, using polling mode only")
@@ -161,7 +165,7 @@ func (sm *SyncManager) Start() error {
 
 	log.WithField("endpoint", sm.config.WSEndpoint).Info("Starting sync manager")
 
-	// 尝试连接
+	// 灏濊瘯杩炴帴
 	if err := sm.connect(); err != nil {
 		log.WithError(err).Warn("Initial WebSocket connection failed")
 
@@ -174,64 +178,136 @@ func (sm *SyncManager) Start() error {
 		return nil
 	}
 
-	// 启动工作协程
+	// 鍚姩宸ヤ綔鍗忕▼
 	sm.startWorkers()
 
 	return nil
 }
 
-// connect 建立 WebSocket 连接
+// connect 寤虹珛 WebSocket 杩炴帴
 func (sm *SyncManager) connect() error {
 	if !sm.compareAndSetState(SyncStateDisconnected, SyncStateConnecting) &&
 		!sm.compareAndSetState(SyncStateFallback, SyncStateConnecting) {
 		return fmt.Errorf("invalid state for connect: %s", sm.getState())
 	}
 
-	wsURL := sm.buildWSURL()
-
-	log.WithField("url", wsURL).Debug("Connecting to WebSocket")
-
 	dialer := websocket.Dialer{
 		HandshakeTimeout: 10 * time.Second,
 	}
 
-	headers := sm.buildHeaders()
+	var lastErr error
+	for _, endpoint := range sm.wsEndpoints() {
+		wsURL := sm.buildWSURL(endpoint)
+		headers := sm.buildHeaders(endpoint)
 
-	conn, resp, err := dialer.DialContext(sm.ctx, wsURL, headers)
-	if err != nil {
-		sm.setState(SyncStateDisconnected)
-		if resp != nil {
-			log.WithFields(log.Fields{
-				"status": resp.StatusCode,
-				"error":  err,
-			}).Error("WebSocket dial failed")
+		log.WithFields(log.Fields{
+			"endpoint": endpoint,
+			"url":      wsURL,
+		}).Debug("Connecting to WebSocket")
+
+		conn, resp, err := dialer.DialContext(sm.ctx, wsURL, headers)
+		if err != nil {
+			lastErr = err
+			if resp != nil {
+				log.WithFields(log.Fields{
+					"endpoint": endpoint,
+					"status":   resp.StatusCode,
+					"error":    err,
+				}).Warn("WebSocket dial failed")
+			}
+			continue
 		}
-		return fmt.Errorf("dial: %w", err)
+
+		sm.connMu.Lock()
+		sm.conn = conn
+		sm.connMu.Unlock()
+
+		sm.setState(SyncStateConnected)
+		sm.stats.LastConnectedAt = time.Now()
+
+		log.WithField("endpoint", endpoint).Info("WebSocket connected successfully")
+		return nil
 	}
 
-	sm.connMu.Lock()
-	sm.conn = conn
-	sm.connMu.Unlock()
-
-	sm.setState(SyncStateConnected)
-	sm.stats.LastConnectedAt = time.Now()
-
-	log.Info("WebSocket connected successfully")
-	return nil
+	sm.setState(SyncStateDisconnected)
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no websocket endpoints configured")
+	}
+	return fmt.Errorf("dial: %w", lastErr)
 }
 
-// buildWSURL 构建 WebSocket URL
-func (sm *SyncManager) buildWSURL() string {
+// buildWSURL 鏋勫缓 WebSocket URL
+func (sm *SyncManager) wsEndpoints() []string {
+	seen := make(map[string]struct{})
+	endpoints := make([]string, 0, 1+len(sm.config.WSEndpointFallbacks))
+
+	appendEndpoint := func(endpoint string) {
+		ep := normalizeWSEndpoint(endpoint)
+		if ep == "" {
+			return
+		}
+		if _, exists := seen[ep]; exists {
+			return
+		}
+		seen[ep] = struct{}{}
+		endpoints = append(endpoints, ep)
+	}
+
+	appendEndpoint(sm.config.WSEndpoint)
+	for _, endpoint := range sm.config.WSEndpointFallbacks {
+		appendEndpoint(endpoint)
+	}
+
+	if len(endpoints) == 0 {
+		endpoints = append(endpoints, "/api/v2/agent/ws")
+	}
+
+	return endpoints
+}
+
+func normalizeWSEndpoint(endpoint string) string {
+	ep := strings.TrimSpace(endpoint)
+	if ep == "" {
+		return ""
+	}
+	if !strings.HasPrefix(ep, "/") {
+		ep = "/" + ep
+	}
+	return ep
+}
+
+func normalizeIncomingMessageType(messageType panel.SyncMessageType) panel.SyncMessageType {
+	switch messageType {
+	case panel.SyncMessageType("config.update"):
+		return panel.MsgTypeConfigUpdate
+	case panel.SyncMessageType("user.update"):
+		return panel.MsgTypeUserUpdate
+	case panel.SyncMessageType("user.ban"):
+		return panel.MsgTypeUserBan
+	case panel.SyncMessageType("rule.update"):
+		return panel.MsgTypeRuleUpdate
+	case panel.SyncMessageType("cert.update"):
+		return panel.MsgTypeCertUpdate
+	case panel.SyncMessageType("traffic.report"):
+		return panel.MsgTypeTrafficReport
+	case panel.SyncMessageType("force.reload"):
+		return panel.MsgTypeForceReload
+	default:
+		return messageType
+	}
+}
+
+func (sm *SyncManager) buildWSURL(endpoint string) string {
 	baseURL := sm.client.APIHost
 
-	// 替换 http -> ws, https -> wss
+	// 鏇挎崲 http -> ws, https -> wss
 	baseURL = strings.Replace(baseURL, "https://", "wss://", 1)
 	baseURL = strings.Replace(baseURL, "http://", "ws://", 1)
 
-	// 解析并添加查询参数
-	u, err := url.Parse(baseURL + sm.config.WSEndpoint)
+	// 瑙ｆ瀽骞舵坊鍔犳煡璇㈠弬鏁?
+	u, err := url.Parse(baseURL + endpoint)
 	if err != nil {
-		return baseURL + sm.config.WSEndpoint
+		return baseURL + endpoint
 	}
 
 	q := u.Query()
@@ -241,16 +317,16 @@ func (sm *SyncManager) buildWSURL() string {
 	return u.String()
 }
 
-// buildHeaders 构建请求头
-func (sm *SyncManager) buildHeaders() http.Header {
+// buildHeaders 鏋勫缓璇锋眰澶?
+func (sm *SyncManager) buildHeaders(endpoint string) http.Header {
 	headers := http.Header{}
 	headers.Set("X-API-Key", sm.client.Token)
 	headers.Set("X-Node-ID", strconv.Itoa(sm.client.NodeId))
 
-	// 添加签名
+	// 娣诲姞绛惧悕
 	if sm.client.EnableSign && sm.client.Secret != "" {
 		signer := sign.NewSigner(sm.client.Secret)
-		signData := signer.Sign("GET", sm.config.WSEndpoint, nil)
+		signData := signer.Sign("GET", endpoint, nil)
 		headers.Set("X-Timestamp", signData.Timestamp)
 		headers.Set("X-Nonce", signData.Nonce)
 		headers.Set("X-Signature", signData.Signature)
@@ -259,7 +335,7 @@ func (sm *SyncManager) buildHeaders() http.Header {
 	return headers
 }
 
-// startWorkers 启动工作协程
+// startWorkers 鍚姩宸ヤ綔鍗忕▼
 func (sm *SyncManager) startWorkers() {
 	sm.wg.Add(4)
 	go sm.readLoop()
@@ -268,7 +344,7 @@ func (sm *SyncManager) startWorkers() {
 	go sm.heartbeatLoop()
 }
 
-// readLoop 读取消息循环
+// readLoop 璇诲彇娑堟伅寰幆
 func (sm *SyncManager) readLoop() {
 	defer sm.wg.Done()
 	defer sm.handleDisconnect()
@@ -301,11 +377,12 @@ func (sm *SyncManager) readLoop() {
 			log.WithError(err).Error("Failed to unmarshal message")
 			continue
 		}
+		msg.Type = normalizeIncomingMessageType(msg.Type)
 
 		atomic.AddInt64(&sm.stats.MessagesReceived, 1)
 		sm.stats.LastMessageAt = time.Now()
 
-		// 优先处理紧急消息
+		// 浼樺厛澶勭悊绱ф€ユ秷鎭?
 		if msg.IsUrgent() {
 			go sm.handleMessage(&msg)
 		} else {
@@ -318,7 +395,7 @@ func (sm *SyncManager) readLoop() {
 	}
 }
 
-// writeLoop 发送消息循环
+// writeLoop 鍙戦€佹秷鎭惊鐜?
 func (sm *SyncManager) writeLoop() {
 	defer sm.wg.Done()
 
@@ -327,14 +404,20 @@ func (sm *SyncManager) writeLoop() {
 		case <-sm.ctx.Done():
 			return
 		case msg := <-sm.outbound:
-			if err := sm.send(msg); err != nil {
+			var err error
+			if msg != nil && msg.RequireAck {
+				err = sm.sendWithAck(msg)
+			} else {
+				err = sm.send(msg)
+			}
+			if err != nil {
 				log.WithError(err).Error("Failed to send message")
 			}
 		}
 	}
 }
 
-// processLoop 处理消息循环
+// processLoop 澶勭悊娑堟伅寰幆
 func (sm *SyncManager) processLoop() {
 	defer sm.wg.Done()
 
@@ -348,7 +431,7 @@ func (sm *SyncManager) processLoop() {
 	}
 }
 
-// heartbeatLoop 心跳循环
+// heartbeatLoop 蹇冭烦寰幆
 func (sm *SyncManager) heartbeatLoop() {
 	defer sm.wg.Done()
 
@@ -364,7 +447,7 @@ func (sm *SyncManager) heartbeatLoop() {
 				continue
 			}
 
-			// 发送心跳
+			// 鍙戦€佸績璺?
 			if err := sm.sendHeartbeat(); err != nil {
 				log.WithError(err).Warn("Failed to send heartbeat")
 			}
@@ -372,8 +455,13 @@ func (sm *SyncManager) heartbeatLoop() {
 	}
 }
 
-// handleMessage 处理消息
+// handleMessage 澶勭悊娑堟伅
 func (sm *SyncManager) handleMessage(msg *panel.SyncMessage) {
+	if msg == nil {
+		return
+	}
+	msg.Type = normalizeIncomingMessageType(msg.Type)
+
 	log.WithFields(log.Fields{
 		"type": msg.Type,
 		"id":   msg.ID,
@@ -398,19 +486,19 @@ func (sm *SyncManager) handleMessage(msg *panel.SyncMessage) {
 		err = sm.handleForceReload(msg)
 	case panel.MsgTypeAck:
 		sm.handleAck(msg)
-		return // Ack 消息不需要再确认
+		return // Ack 娑堟伅涓嶉渶瑕佸啀纭
 	default:
 		log.WithField("type", msg.Type).Warn("Unknown message type")
 		return
 	}
 
-	// 发送确认
+	// 鍙戦€佺‘璁?
 	if msg.RequireAck {
 		sm.sendAck(msg.ID, err)
 	}
 }
 
-// handleConfigUpdate 处理配置更新
+// handleConfigUpdate 澶勭悊閰嶇疆鏇存柊
 func (sm *SyncManager) handleConfigUpdate(msg *panel.SyncMessage) error {
 	var payload panel.ConfigUpdatePayload
 	if err := msg.ParsePayload(&payload); err != nil {
@@ -423,17 +511,17 @@ func (sm *SyncManager) handleConfigUpdate(msg *panel.SyncMessage) error {
 	}).Info("Received config update")
 
 	if payload.ChangeType == "full" && payload.NodeInfo != nil {
-		// 完整配置更新 - 触发节点重载
+		// 瀹屾暣閰嶇疆鏇存柊 - 瑙﹀彂鑺傜偣閲嶈浇
 		return sm.controller.reloadNode(payload.NodeInfo)
 	}
 
-	// TODO: 实现增量配置更新
-	// 目前先使用完整重载
+	// TODO: 瀹炵幇澧為噺閰嶇疆鏇存柊
+	// 鐩墠鍏堜娇鐢ㄥ畬鏁撮噸杞?
 	log.Debug("Partial config update, fetching full config")
 	return sm.controller.nodeInfoMonitor()
 }
 
-// handleUserUpdate 处理用户更新
+// handleUserUpdate 澶勭悊鐢ㄦ埛鏇存柊
 func (sm *SyncManager) handleUserUpdate(msg *panel.SyncMessage) error {
 	var payload panel.UserUpdatePayload
 	if err := msg.ParsePayload(&payload); err != nil {
@@ -464,7 +552,7 @@ func (sm *SyncManager) handleUserUpdate(msg *panel.SyncMessage) error {
 		sm.controller.limiter.UpdateUser(sm.controller.tag, nil, payload.Users)
 
 	case "update":
-		// 先删除再添加
+		// 鍏堝垹闄ゅ啀娣诲姞
 		_ = sm.controller.server.DelUsers(payload.Users, sm.controller.tag, sm.controller.info)
 		_, err := sm.controller.server.AddUsers(&vCore.AddUsersParams{
 			Tag:      sm.controller.tag,
@@ -480,7 +568,7 @@ func (sm *SyncManager) handleUserUpdate(msg *panel.SyncMessage) error {
 	return nil
 }
 
-// handleUserBan 处理用户封禁 (紧急事件)
+// handleUserBan 澶勭悊鐢ㄦ埛灏佺 (绱ф€ヤ簨浠?
 func (sm *SyncManager) handleUserBan(msg *panel.SyncMessage) error {
 	var payload panel.UserBanPayload
 	if err := msg.ParsePayload(&payload); err != nil {
@@ -492,7 +580,7 @@ func (sm *SyncManager) handleUserBan(msg *panel.SyncMessage) error {
 		"reason": payload.Reason,
 	}).Warn("Received user ban (URGENT)")
 
-	// 构建 UserInfo 用于删除
+	// 鏋勫缓 UserInfo 鐢ㄤ簬鍒犻櫎
 	users := make([]panel.UserInfo, 0, len(payload.UUIDs))
 	for i, uuid := range payload.UUIDs {
 		uid := 0
@@ -505,7 +593,7 @@ func (sm *SyncManager) handleUserBan(msg *panel.SyncMessage) error {
 		})
 	}
 
-	// 立即删除
+	// 绔嬪嵆鍒犻櫎
 	if err := sm.controller.server.DelUsers(users, sm.controller.tag, sm.controller.info); err != nil {
 		return fmt.Errorf("ban users: %w", err)
 	}
@@ -515,7 +603,7 @@ func (sm *SyncManager) handleUserBan(msg *panel.SyncMessage) error {
 	return nil
 }
 
-// handleRuleUpdate 处理规则更新
+// handleRuleUpdate 澶勭悊瑙勫垯鏇存柊
 func (sm *SyncManager) handleRuleUpdate(msg *panel.SyncMessage) error {
 	var payload panel.RuleUpdatePayload
 	if err := msg.ParsePayload(&payload); err != nil {
@@ -527,7 +615,7 @@ func (sm *SyncManager) handleRuleUpdate(msg *panel.SyncMessage) error {
 	return sm.controller.limiter.UpdateRule(&payload.Rules)
 }
 
-// handleCertUpdate 处理证书更新
+// handleCertUpdate 澶勭悊璇佷功鏇存柊
 func (sm *SyncManager) handleCertUpdate(msg *panel.SyncMessage) error {
 	var payload panel.CertUpdatePayload
 	if err := msg.ParsePayload(&payload); err != nil {
@@ -536,8 +624,8 @@ func (sm *SyncManager) handleCertUpdate(msg *panel.SyncMessage) error {
 
 	log.WithField("domain", payload.Domain).Info("Received cert update")
 
-	// TODO: 实现证书热更新
-	// 目前先触发完整重载
+	// TODO: 瀹炵幇璇佷功鐑洿鏂?
+	// 鐩墠鍏堣Е鍙戝畬鏁撮噸杞?
 	if payload.AutoReload {
 		return sm.controller.nodeInfoMonitor()
 	}
@@ -545,14 +633,14 @@ func (sm *SyncManager) handleCertUpdate(msg *panel.SyncMessage) error {
 	return nil
 }
 
-// handlePing 处理 Ping
+// handlePing 澶勭悊 Ping
 func (sm *SyncManager) handlePing(msg *panel.SyncMessage) error {
 	var payload panel.PingPayload
 	if err := msg.ParsePayload(&payload); err != nil {
 		return fmt.Errorf("parse payload: %w", err)
 	}
 
-	// 回复 Pong
+	// 鍥炲 Pong
 	pong := &panel.PongPayload{
 		ServerTime: payload.ServerTime,
 		ClientTime: time.Now().Unix(),
@@ -565,7 +653,7 @@ func (sm *SyncManager) handlePing(msg *panel.SyncMessage) error {
 	return nil
 }
 
-// handleForceReload 处理强制重载
+// handleForceReload 澶勭悊寮哄埗閲嶈浇
 func (sm *SyncManager) handleForceReload(msg *panel.SyncMessage) error {
 	var payload panel.ForceReloadPayload
 	if err := msg.ParsePayload(&payload); err != nil {
@@ -574,15 +662,35 @@ func (sm *SyncManager) handleForceReload(msg *panel.SyncMessage) error {
 
 	log.WithField("reason", payload.Reason).Warn("Received force reload command")
 
-	// 重新获取配置并重载节点
+	// 閲嶆柊鑾峰彇閰嶇疆骞堕噸杞借妭鐐?
 	return sm.controller.nodeInfoMonitor()
 }
 
-// handleAck 处理确认消息
+// handleAck 澶勭悊纭娑堟伅
 func (sm *SyncManager) handleAck(msg *panel.SyncMessage) {
 	var payload panel.AckPayload
-	if err := msg.ParsePayload(&payload); err != nil {
-		log.WithError(err).Error("Failed to parse ack payload")
+	if err := msg.ParsePayload(&payload); err != nil || payload.MessageID == "" {
+		var alias struct {
+			MsgID     string `json:"msg_id"`
+			MessageID string `json:"message_id"`
+			Success   bool   `json:"success"`
+			Error     string `json:"error,omitempty"`
+			Timestamp int64  `json:"timestamp"`
+		}
+		if err := json.Unmarshal(msg.Payload, &alias); err != nil {
+			log.WithError(err).Error("Failed to parse ack payload")
+			return
+		}
+		payload.MessageID = alias.MsgID
+		if payload.MessageID == "" {
+			payload.MessageID = alias.MessageID
+		}
+		payload.Success = alias.Success
+		payload.Error = alias.Error
+		payload.Timestamp = alias.Timestamp
+	}
+
+	if payload.MessageID == "" {
 		return
 	}
 
@@ -595,7 +703,7 @@ func (sm *SyncManager) handleAck(msg *panel.SyncMessage) {
 	}
 }
 
-// sendAck 发送确认消息
+// sendAck 鍙戦€佺‘璁ゆ秷鎭?
 func (sm *SyncManager) sendAck(msgID string, err error) {
 	payload := &panel.AckPayload{
 		MessageID: msgID,
@@ -610,11 +718,11 @@ func (sm *SyncManager) sendAck(msgID string, err error) {
 	sm.outbound <- ackMsg
 }
 
-// sendHeartbeat 发送心跳
+// sendHeartbeat 鍙戦€佸績璺?
 func (sm *SyncManager) sendHeartbeat() error {
 	payload := &panel.HeartbeatPayload{
 		Uptime:  time.Since(sm.stats.LastConnectedAt).Milliseconds() / 1000,
-		Version: "1.0.0", // TODO: 使用实际版本
+		Version: "1.0.0", // TODO: 浣跨敤瀹為檯鐗堟湰
 	}
 
 	msg, _ := panel.NewSyncMessage(panel.MsgTypeHeartbeat, sm.client.NodeId, payload)
@@ -623,7 +731,69 @@ func (sm *SyncManager) sendHeartbeat() error {
 	return nil
 }
 
-// send 发送消息
+// send 鍙戦€佹秷鎭?
+func (sm *SyncManager) sendWithAck(msg *panel.SyncMessage) error {
+	if msg == nil {
+		return nil
+	}
+	if msg.ID == "" {
+		msg.ID = nextMessageID()
+	}
+
+	attempts := sm.config.AckRetries + 1
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		waiter := &pendingAck{
+			msg:     msg,
+			sentAt:  time.Now(),
+			ackChan: make(chan *panel.AckPayload, 1),
+			timeout: sm.config.AckTimeout,
+		}
+		sm.pendingAcks.Store(msg.ID, waiter)
+
+		if err := sm.send(msg); err != nil {
+			sm.pendingAcks.Delete(msg.ID)
+			lastErr = err
+			continue
+		}
+
+		select {
+		case ack := <-waiter.ackChan:
+			sm.pendingAcks.Delete(msg.ID)
+			if ack == nil {
+				lastErr = fmt.Errorf("empty ack for message %s", msg.ID)
+				continue
+			}
+			if !ack.Success {
+				if ack.Error == "" {
+					return fmt.Errorf("ack failed for message %s", msg.ID)
+				}
+				return fmt.Errorf("ack failed: %s", ack.Error)
+			}
+			return nil
+		case <-time.After(sm.config.AckTimeout):
+			sm.pendingAcks.Delete(msg.ID)
+			lastErr = fmt.Errorf("ack timeout after %s", sm.config.AckTimeout)
+		case <-sm.ctx.Done():
+			sm.pendingAcks.Delete(msg.ID)
+			return sm.ctx.Err()
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("send with ack failed")
+	}
+	return lastErr
+}
+
+func nextMessageID() string {
+	return fmt.Sprintf("sync-%d", time.Now().UnixNano())
+}
+
 func (sm *SyncManager) send(msg *panel.SyncMessage) error {
 	sm.connMu.RLock()
 	conn := sm.conn
@@ -646,7 +816,7 @@ func (sm *SyncManager) send(msg *panel.SyncMessage) error {
 	return nil
 }
 
-// handleDisconnect 处理断开连接
+// handleDisconnect 澶勭悊鏂紑杩炴帴
 func (sm *SyncManager) handleDisconnect() {
 	sm.connMu.Lock()
 	if sm.conn != nil {
@@ -661,11 +831,11 @@ func (sm *SyncManager) handleDisconnect() {
 
 	sm.setState(SyncStateDisconnected)
 
-	// 启动重连
+	// 鍚姩閲嶈繛
 	go sm.reconnectLoop()
 }
 
-// reconnectLoop 重连循环
+// reconnectLoop 閲嶈繛寰幆
 func (sm *SyncManager) reconnectLoop() {
 	if !atomic.CompareAndSwapInt32(&sm.reconnecting, 0, 1) {
 		return
@@ -707,13 +877,13 @@ func (sm *SyncManager) reconnectLoop() {
 			continue
 		}
 
-		// 重连成功
+		// 閲嶈繛鎴愬姛
 		sm.startWorkers()
 		return
 	}
 }
 
-// runFallbackMode 降级到轮询模式
+// runFallbackMode 闄嶇骇鍒拌疆璇㈡ā寮?
 func (sm *SyncManager) runFallbackMode() {
 	defer sm.wg.Done()
 
@@ -727,14 +897,14 @@ func (sm *SyncManager) runFallbackMode() {
 		case <-sm.ctx.Done():
 			return
 		case <-ticker.C:
-			// 尝试升级到 WebSocket
+			// 灏濊瘯鍗囩骇鍒?WebSocket
 			if err := sm.connect(); err == nil {
 				log.Info("Upgraded from fallback to WebSocket mode")
 				sm.startWorkers()
 				return
 			}
 
-			// 继续使用轮询
+			// 缁х画浣跨敤杞
 			if err := sm.controller.nodeInfoMonitor(); err != nil {
 				log.WithError(err).Warn("Fallback poll failed")
 			}
@@ -756,7 +926,7 @@ func (sm *SyncManager) compareAndSetState(old, new SyncState) bool {
 	return atomic.CompareAndSwapInt32(&sm.state, int32(old), int32(new))
 }
 
-// Close 关闭同步管理器
+// Close 鍏抽棴鍚屾绠＄悊鍣?
 func (sm *SyncManager) Close() error {
 	sm.setState(SyncStateClosed)
 	sm.cancel()
@@ -768,13 +938,13 @@ func (sm *SyncManager) Close() error {
 	}
 	sm.connMu.Unlock()
 
-	// 等待所有协程退出
+	// 绛夊緟鎵€鏈夊崗绋嬮€€鍑?
 	sm.wg.Wait()
 
 	return nil
 }
 
-// Stats 获取统计信息
+// Stats 鑾峰彇缁熻淇℃伅
 func (sm *SyncManager) Stats() *SyncStats {
 	return &SyncStats{
 		MessagesReceived: atomic.LoadInt64(&sm.stats.MessagesReceived),
@@ -786,7 +956,7 @@ func (sm *SyncManager) Stats() *SyncStats {
 	}
 }
 
-// IsConnected 是否已连接
+// IsConnected 鏄惁宸茶繛鎺?
 func (sm *SyncManager) IsConnected() bool {
 	return sm.getState() == SyncStateConnected
 }
