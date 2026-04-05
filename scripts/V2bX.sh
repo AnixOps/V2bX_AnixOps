@@ -287,6 +287,7 @@ init_config_wizard() {
     local cfg="${CONFIG_DIR}/config.json"
     local backup=""
     local core_type api_host api_key node_id node_type timeout listen_ip send_ip cert_mode
+    local transport grpc_host grpc_use_tls grpc_server_name grpc_keepalive
     local core_json
 
     info "进入初始化配置向导（将写入 ${cfg}）"
@@ -319,6 +320,33 @@ init_config_wizard() {
     listen_ip="$(prompt_text "监听 IP ListenIP" "0.0.0.0")"
     send_ip="$(prompt_text "发送 IP SendIP" "0.0.0.0")"
     cert_mode="$(prompt_text "证书模式 CertMode(self/file/dns)" "self")"
+    while true; do
+        transport="$(prompt_text "传输方式 Transport(http/grpc)" "http")"
+        transport="$(echo "${transport}" | tr '[:upper:]' '[:lower:]')"
+        if [[ "${transport}" == "http" || "${transport}" == "grpc" ]]; then
+            break
+        fi
+        warn "仅支持 http / grpc"
+    done
+
+    grpc_json=""
+    if [[ "${transport}" == "grpc" ]]; then
+        grpc_host="$(prompt_text "GRPCHost(host:port，留空将从 ApiHost 推导)" "")"
+        if confirm "是否启用 GRPCUseTLS (y/n)?" "y"; then
+            grpc_use_tls=true
+        else
+            grpc_use_tls=false
+        fi
+        grpc_server_name="$(prompt_text "GRPCServerName(可为空，默认取主机名)" "")"
+        grpc_keepalive="$(prompt_int "GRPCKeepalive(秒)" "30")"
+        grpc_json=$(cat <<EOF
+      "GRPCHost": "$(json_escape "${grpc_host}")",
+      "GRPCUseTLS": ${grpc_use_tls},
+      "GRPCServerName": "$(json_escape "${grpc_server_name}")",
+      "GRPCKeepalive": ${grpc_keepalive},
+EOF
+)
+    fi
 
     case "${core_type}" in
         sing)
@@ -360,7 +388,8 @@ init_config_wizard() {
     {
       "Core": "$(json_escape "${core_type}")",
       "ApiHost": "$(json_escape "${api_host}")",
-      "ApiKey": "$(json_escape "${api_key}")",
+      "Transport": "$(json_escape "${transport}")",
+${grpc_json}      "ApiKey": "$(json_escape "${api_key}")",
       "NodeID": ${node_id},
       "NodeType": "$(json_escape "${node_type}")",
       "Timeout": ${timeout},
