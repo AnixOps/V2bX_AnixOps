@@ -112,8 +112,13 @@ Windows:
 默认对接 API（示例）：
 - `GET /api/v2/server/UniProxy/config`
 - `GET /api/v2/server/UniProxy/user`
+- `GET /api/v2/server/UniProxy/alivelist`
 - `POST /api/v2/server/UniProxy/push`
 - `POST /api/v2/server/UniProxy/alive`
+
+UniProxy 鉴权约定：
+- Query: `node_id`（必填）+ `node_type`（可选）
+- Header: `X-API-Key: <api_key>`（必填）
 
 请确保面板端版本与本仓库对应，优先使用：
 [AnixOps/v2board_AnixOps](https://github.com/AnixOps/v2board_AnixOps)

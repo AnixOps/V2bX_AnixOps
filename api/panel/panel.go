@@ -23,6 +23,7 @@ type Client struct {
 	APIKey           string // 用于自动发现模式
 	Secret           string // 用于请求签名
 	NodeType         string
+	ProtocolType     string
 	NodeId           int
 	nodeEtag         string
 	userEtag         string
@@ -173,8 +174,10 @@ func New(c *conf.ApiConfig) (*Client, error) {
 	// set params
 	httpClient.SetQueryParams(map[string]string{
 		"node_id": strconv.Itoa(c.NodeID),
-		"token":   c.Key,
 	})
+	if panelClient.Token != "" {
+		httpClient.SetHeader("X-API-Key", panelClient.Token)
+	}
 
 	return panelClient, nil
 }

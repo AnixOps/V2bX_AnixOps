@@ -305,13 +305,6 @@ docker run -d \
 V2bX server -c /etc/V2bX/config.json
 ```
 
-## 运维命令约定
-
-- 节点程序默认配置文件路径保持为 `/etc/V2bX/config.json`（默认读取 `config.json`）
-- AnixOps 管理脚本命令统一使用 `v2bx-anixops`
-- 使用 `v2bx-anixops` 以避免与上游原版 `V2bX` 命令冲突
-- 可通过 `v2bx-anixops initconfig` 或菜单入口执行初始化配置向导，生成 `/etc/V2bX/config.json`
-
 ## 关键文件
 
 | 文件 | 说明 |

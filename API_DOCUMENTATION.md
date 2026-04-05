@@ -8,13 +8,18 @@
 
 ### 请求基础配置
 
-所有 API 请求都需要携带以下 **Query 参数**：
+UniProxy API 请求需要携带以下 **Query 参数**：
 
 | 参数名 | 类型 | 必填 | 说明 |
 |--------|------|------|------|
-| `node_type` | string | 是 | 节点类型：`vmess`, `vless`, `trojan`, `shadowsocks`, `hysteria`, `hysteria2`, `tuic`, `anytls` |
 | `node_id` | int | 是 | 节点ID |
-| `token` | string | 是 | API 鉴权令牌 |
+| `node_type` | string | 否 | 节点类型（建议携带）：`vmess`, `vless`, `trojan`, `shadowsocks`, `hysteria`, `hysteria2`, `tuic`, `anytls` |
+
+UniProxy API 请求需要携带以下 **Header**：
+
+| Header | 类型 | 必填 | 说明 |
+|--------|------|------|------|
+| `X-API-Key` | string | 是 | API Key 鉴权令牌 |
 
 ### 响应通用规范
 
@@ -34,12 +39,13 @@
 
 **请求**
 ```
-GET /api/v1/server/UniProxy/config
+GET /api/v2/server/UniProxy/config
 ```
 
 **请求头**
 | 头名称 | 说明 |
 |--------|------|
+| `X-API-Key` | 节点 API Key（必填） |
 | `If-None-Match` | ETag 值，用于缓存判断 |
 
 **响应**
@@ -264,12 +270,13 @@ GET /api/v1/server/UniProxy/config
 
 **请求**
 ```
-GET /api/v1/server/UniProxy/user
+GET /api/v2/server/UniProxy/user
 ```
 
 **请求头**
 | 头名称 | 说明 |
 |--------|------|
+| `X-API-Key` | 节点 API Key（必填） |
 | `If-None-Match` | ETag 值，用于缓存判断 |
 | `X-Response-Format` | 响应格式，可选 `msgpack` |
 
@@ -314,8 +321,13 @@ GET /api/v1/server/UniProxy/user
 
 **请求**
 ```
-GET /api/v1/server/UniProxy/alivelist
+GET /api/v2/server/UniProxy/alivelist
 ```
+
+**请求头**
+| 头名称 | 说明 |
+|--------|------|
+| `X-API-Key` | 节点 API Key（必填） |
 
 **响应**
 ```json
@@ -340,8 +352,13 @@ GET /api/v1/server/UniProxy/alivelist
 
 **请求**
 ```
-POST /api/v1/server/UniProxy/push
+POST /api/v2/server/UniProxy/push
 ```
+
+**请求头**
+| 头名称 | 说明 |
+|--------|------|
+| `X-API-Key` | 节点 API Key（必填） |
 
 **请求体**
 ```json
@@ -381,8 +398,13 @@ POST /api/v1/server/UniProxy/push
 
 **请求**
 ```
-POST /api/v1/server/UniProxy/alive
+POST /api/v2/server/UniProxy/alive
 ```
+
+**请求头**
+| 头名称 | 说明 |
+|--------|------|
+| `X-API-Key` | 节点 API Key（必填） |
 
 **请求体**
 ```json
@@ -482,7 +504,7 @@ CREATE TABLE nodes (
     routes JSON,  -- 存储路由规则
     push_interval INT DEFAULT 60,
     pull_interval INT DEFAULT 60,
-    api_token VARCHAR(255),
+    api_key VARCHAR(255),
     created_at TIMESTAMP,
     updated_at TIMESTAMP
 );
@@ -553,10 +575,10 @@ CREATE TABLE online_logs (
 ### 获取节点配置
 
 ```python
-@app.get("/api/v1/server/UniProxy/config")
-def get_config(node_type: str, node_id: int, token: str, if_none_match: str = None):
-    # 1. 验证 token
-    node = verify_node_token(node_id, token)
+@app.get("/api/v2/server/UniProxy/config")
+def get_config(node_id: int, x_api_key: str, node_type: str = None, if_none_match: str = None):
+    # 1. 验证 X-API-Key
+    node = verify_node_api_key(node_id, x_api_key)
     if not node:
         return Response(status=401)
     
@@ -565,8 +587,8 @@ def get_config(node_type: str, node_id: int, token: str, if_none_match: str = No
     if if_none_match == current_etag:
         return Response(status=304)
     
-    # 3. 根据节点类型构建响应
-    config = build_node_config(node, node_type)
+    # 3. 根据节点类型构建响应（node_type 可选）
+    config = build_node_config(node, node_type or node.type)
     
     return Response(
         body=config,
@@ -577,11 +599,11 @@ def get_config(node_type: str, node_id: int, token: str, if_none_match: str = No
 ### 获取用户列表
 
 ```python
-@app.get("/api/v1/server/UniProxy/user")
-def get_users(node_type: str, node_id: int, token: str, 
+@app.get("/api/v2/server/UniProxy/user")
+def get_users(node_id: int, x_api_key: str, node_type: str = None, 
               if_none_match: str = None, x_response_format: str = None):
-    # 1. 验证 token
-    node = verify_node_token(node_id, token)
+    # 1. 验证 X-API-Key
+    node = verify_node_api_key(node_id, x_api_key)
     if not node:
         return Response(status=401)
     
@@ -623,10 +645,10 @@ def get_users(node_type: str, node_id: int, token: str,
 ### 上报流量
 
 ```python
-@app.post("/api/v1/server/UniProxy/push")
-def push_traffic(node_type: str, node_id: int, token: str, body: dict):
-    # 1. 验证 token
-    node = verify_node_token(node_id, token)
+@app.post("/api/v2/server/UniProxy/push")
+def push_traffic(node_id: int, x_api_key: str, body: dict, node_type: str = None):
+    # 1. 验证 X-API-Key
+    node = verify_node_api_key(node_id, x_api_key)
     if not node:
         return Response(status=401)
     
@@ -646,10 +668,10 @@ def push_traffic(node_type: str, node_id: int, token: str, body: dict):
 ### 上报在线状态
 
 ```python
-@app.post("/api/v1/server/UniProxy/alive")
-def push_alive(node_type: str, node_id: int, token: str, body: dict):
-    # 1. 验证 token
-    node = verify_node_token(node_id, token)
+@app.post("/api/v2/server/UniProxy/alive")
+def push_alive(node_id: int, x_api_key: str, body: dict, node_type: str = None):
+    # 1. 验证 X-API-Key
+    node = verify_node_api_key(node_id, x_api_key)
     if not node:
         return Response(status=401)
     
@@ -668,10 +690,10 @@ def push_alive(node_type: str, node_id: int, token: str, body: dict):
 ### 获取在线 IP 数量
 
 ```python
-@app.get("/api/v1/server/UniProxy/alivelist")
-def get_alive_list(node_type: str, node_id: int, token: str):
-    # 1. 验证 token
-    node = verify_node_token(node_id, token)
+@app.get("/api/v2/server/UniProxy/alivelist")
+def get_alive_list(node_id: int, x_api_key: str, node_type: str = None):
+    # 1. 验证 X-API-Key
+    node = verify_node_api_key(node_id, x_api_key)
     if not node:
         return Response(status=401)
     
@@ -705,7 +727,7 @@ def get_alive_list(node_type: str, node_id: int, token: str):
     {
       "Core": "sing",
       "ApiHost": "https://your-panel.com",
-      "ApiKey": "your-api-token",
+      "ApiKey": "your-api-key",
       "NodeID": 1,
       "Timeout": 30,
       "ListenIP": "0.0.0.0",
@@ -783,7 +805,7 @@ def get_alive_list(node_type: str, node_id: int, token: str):
        │  │ 无凭证 → 继续步骤2   │                 │
        │  └───────────────────┘                 │
        │                                        │
-       │  2. POST /api/v1/node/register        │
+       │  2. POST /api/v2/node/register        │
        │  {auth_key, name, host, port, ...}    │
        │ ─────────────────────────────────────►│
        │                                        │
@@ -793,7 +815,7 @@ def get_alive_list(node_type: str, node_id: int, token: str):
        │                                        │
        │  4. 保存凭证到本地文件                   │
        │                                        │
-       │  5. POST /api/v1/node/heartbeat       │
+       │  5. POST /api/v2/node/heartbeat       │
        │  Header: X-API-Key: <api_key>         │
        │  {cpu_usage, memory_usage, ...}       │
        │ ─────────────────────────────────────►│
@@ -807,7 +829,7 @@ def get_alive_list(node_type: str, node_id: int, token: str):
 
 ### 节点注册
 
-**Endpoint:** `POST /api/v1/node/register`
+**Endpoint:** `POST /api/v2/node/register`
 
 **Request:**
 ```json
@@ -845,7 +867,7 @@ def get_alive_list(node_type: str, node_id: int, token: str):
 
 ### 节点心跳
 
-**Endpoint:** `POST /api/v1/node/heartbeat`
+**Endpoint:** `POST /api/v2/node/heartbeat`
 
 **Headers:**
 ```
