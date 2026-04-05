@@ -347,6 +347,7 @@ type SyncManager struct {
 type SyncConfig struct {
     // WebSocket 配置
     WSEndpoint        string        `json:"ws_endpoint"`
+    WSEndpointFallbacks []string      `json:"ws_endpoint_fallbacks"`
     ReconnectInterval time.Duration `json:"reconnect_interval"`
     MaxReconnectTries int           `json:"max_reconnect_tries"`
     
@@ -357,20 +358,25 @@ type SyncConfig struct {
     // 消息配置
     AckTimeout        time.Duration `json:"ack_timeout"`
     BufferSize        int           `json:"buffer_size"`
+    AckRetries        int           `json:"ack_retries"`
     
     // 降级配置
     EnableFallback    bool          `json:"enable_fallback"`
     FallbackInterval  time.Duration `json:"fallback_interval"`
 }
 
+`WSEndpointFallbacks` 列表會在 `/api/v2/agent/ws` 之後順序嘗試，預設包含 `/api/v2/node/ws`，`AckRetries` 決定 `require_ack=true` 消息在每次 `AckTimeout` 後最多重試次數（實際嘗試次數為 `AckRetries + 1`），節點可根據 `id` 去重。
+
 func DefaultSyncConfig() *SyncConfig {
     return &SyncConfig{
-        WSEndpoint:        "/api/v2/node/ws",
+        WSEndpoint:        "/api/v2/agent/ws",
+        WSEndpointFallbacks: []string{"/api/v2/node/ws"},
         ReconnectInterval: 5 * time.Second,
         MaxReconnectTries: 0, // 0 = 无限重试
         PingInterval:      30 * time.Second,
         PongTimeout:       10 * time.Second,
         AckTimeout:        5 * time.Second,
+        AckRetries:        2,
         BufferSize:        100,
         EnableFallback:    true,
         FallbackInterval:  60 * time.Second,
@@ -697,11 +703,12 @@ func (sm *SyncManager) Close() error {
 后端需要实现以下端点:
 
 1. WebSocket 端点
-   GET /api/v2/node/ws
+   GET /api/v2/agent/ws
    Headers:
      - X-API-Key: 节点 API Key
      - X-Node-ID: 节点 ID
      - X-Timestamp, X-Nonce, X-Signature: 签名相关
+   - 主端点 `/api/v2/agent/ws`，`SyncConfig.WSEndpointFallbacks` 默认含 `/api/v2/node/ws` 作为备援。
 
 2. SSE 端点 (备选)
    GET /api/v2/node/events
@@ -774,10 +781,14 @@ func (sm *SyncManager) Close() error {
       // 新增同步配置
       "SyncConfig": {
         "EnableWebSocket": true,
-        "WSEndpoint": "/api/v2/node/ws",
+        "WSEndpoint": "/api/v2/agent/ws",
+        "WSEndpointFallbacks": ["/api/v2/node/ws"],
         "ReconnectInterval": 5,
         "MaxReconnectTries": 0,
         "PingInterval": 30,
+        "AckTimeout": 5,
+        "AckRetries": 2,
+        "BufferSize": 100,
         "EnableFallback": true,
         "FallbackInterval": 60
       }

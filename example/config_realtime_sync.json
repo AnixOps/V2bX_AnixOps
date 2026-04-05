@@ -23,7 +23,7 @@
       "Core": "sing",
       "ApiHost": "https://your-panel.com",
       
-      // 自动注册配置
+      // 鑷姩娉ㄥ唽閰嶇疆
       "AutoRegister": true,
       "AuthKey": "your-auth-key-from-panel",
       "NodeName": "Tokyo-Node-01",
@@ -32,31 +32,35 @@
       "CredentialFile": "data/credential.json",
       "HeartbeatInterval": 60,
       
-      // 安全配置
+      // 瀹夊叏閰嶇疆
       "EnableSign": true,
       "EncryptCredential": true,
       
-      // 实时同步配置 (双边通讯)
+      // 瀹炴椂鍚屾閰嶇疆 (鍙岃竟閫氳)
       "SyncConfig": {
-        // 是否启用 WebSocket 实时同步
+        // 鏄惁鍚敤 WebSocket 瀹炴椂鍚屾
         "EnableWebSocket": true,
-        // WebSocket 端点路径
-        "WSEndpoint": "/api/v2/node/ws",
-        // 断线重连间隔 (秒)
+        // WebSocket 绔偣璺緞
+        "WSEndpoint": "/api/v2/agent/ws",
+        // 鍏煎鏃ч潰鏉挎椂鍙嚜鍔ㄥ洖閫€
+        "WSEndpointFallbacks": ["/api/v2/node/ws"],
+        // 鏂嚎閲嶈繛闂撮殧 (绉?
         "ReconnectInterval": 5,
-        // 最大重连尝试次数 (0=无限)
+        // 鏈€澶ч噸杩炲皾璇曟鏁?(0=鏃犻檺)
         "MaxReconnectTries": 0,
-        // 心跳间隔 (秒)
+        // 蹇冭烦闂撮殧 (绉?
         "PingInterval": 30,
-        // Pong 超时时间 (秒)
+        // Pong 瓒呮椂鏃堕棿 (绉?
         "PongTimeout": 10,
-        // 消息确认超时 (秒)
+        // 娑堟伅纭瓒呮椂 (绉?
         "AckTimeout": 5,
-        // 消息缓冲区大小
+        // ACK 瓒呮椂鍚庨噸璇曟鏁?
+        "AckRetries": 2,
+        // 娑堟伅缂撳啿鍖哄ぇ灏?
         "BufferSize": 100,
-        // 是否启用降级模式 (WebSocket 不可用时自动切换到轮询)
+        // 鏄惁鍚敤闄嶇骇妯″紡 (WebSocket 涓嶅彲鐢ㄦ椂鑷姩鍒囨崲鍒拌疆璇?
         "EnableFallback": true,
-        // 降级模式轮询间隔 (秒)
+        // 闄嶇骇妯″紡杞闂撮殧 (绉?
         "FallbackInterval": 60
       },
       
@@ -81,3 +85,4 @@
     }
   ]
 }
+

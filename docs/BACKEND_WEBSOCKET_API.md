@@ -7,9 +7,11 @@
 ### 1.1 端点信息
 
 ```
-GET /api/v2/node/ws
+GET /api/v2/agent/ws
 协议: WSS (生产环境) / WS (开发环境)
 ```
+
+节點預設使用 `/api/v2/agent/ws` 連線；當主端點握手失敗時，`SyncConfig.WSEndpointFallbacks`（預設含 `/api/v2/node/ws`）會按順序補上作為備援，兩者共享相同驗證要求。
 
 ### 1.2 认证参数
 
@@ -36,12 +38,12 @@ signature = HMAC-SHA256(secret, method + path + timestamp + nonce + body)
 **示例:**
 ```
 method = "GET"
-path = "/api/v2/node/ws"
+path = "/api/v2/agent/ws"
 timestamp = "1703577600"
 nonce = "abc123"
 body = ""
 
-signature = HMAC-SHA256(secret, "GET/api/v2/node/ws1703577600abc123")
+signature = HMAC-SHA256(secret, "GET/api/v2/agent/ws1703577600abc123")
 ```
 
 ### 1.4 连接响应
@@ -326,6 +328,8 @@ Connection: Upgrade
 }
 ```
 
+当 `require_ack=true` 的消息在节点完成处理后必须发送 `type=ack` 的确认，`payload.msg_id` 对应原消息。面板会在 `SyncConfig.AckTimeout`（默认 5 秒）后重新发送该消息，最多重试 `SyncConfig.AckRetries` 次（即总共 `AckRetries + 1` 次），因此节点需要以 `msg_id` 去重并在 `success=false` 时写明错误信息。
+
 #### 3.2.4 traffic_report - 流量上报
 
 上报用户流量数据。
@@ -480,8 +484,8 @@ Client                              Server
 
 ### 6.2 消息确认
 
-- 需要确认的消息 (`require_ack=true`) 应在处理完成后发送 ack
-- 建议设置 5 秒超时，超时后服务端可重发
+- 需要确认的消息 (`require_ack=true`) 应在处理完成后发送 ack，面板在 `SyncConfig.AckTimeout`（默认 5 秒）后会重发同一条消息，最多再尝试 `SyncConfig.AckRetries` 次（即 `AckRetries + 1` 次）。
+- 建议将 `AckTimeout` 设置为 5 秒以便及时发现丢失的 ack，超时后服务端按照 `AckRetries` 配置重试。
 - 节点应记录已处理的消息 ID，避免重复处理
 
 ### 6.3 心跳策略
