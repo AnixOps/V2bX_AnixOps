@@ -21,27 +21,22 @@
   "Nodes": [
     {
       "Core": "sing",
-      "ApiHost": "http://127.0.0.1",
-      "Transport": "http",
+      "ApiHost": "https://panel.example.com",
+      "Transport": "grpc",
+      "GRPCHost": "panel.example.com:443",
+      "GRPCUseTLS": true,
+      "GRPCServerName": "panel.example.com",
+      "GRPCKeepalive": 30,
       "ApiKey": "your-api-key",
-      "NodeID": 33,
+      "NodeID": 1,
+      "NodeType": "vmess",
       "Timeout": 30,
       "ListenIP": "0.0.0.0",
       "SendIP": "0.0.0.0",
       "DeviceOnlineMinTraffic": 200,
       "MinReportTraffic": 0,
-      "TCPFastOpen": false,
-      "SniffEnabled": true,
       "CertConfig": {
-        "CertMode": "self",
-        "RejectUnknownSni": false,
-        "CertDomain": "example.com",
-        "CertFile": "/etc/V2bX/fullchain.cer",
-        "KeyFile": "/etc/V2bX/cert.key",
-        "Provider": "cloudflare",
-        "DNSEnv": {
-          "EnvName": "env1"
-        }
+        "CertMode": "self"
       }
     }
   ]

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	apiclient "github.com/InazumaV/V2bX/api/client"
 	"github.com/InazumaV/V2bX/api/panel"
 	"github.com/InazumaV/V2bX/common/task"
 	"github.com/InazumaV/V2bX/conf"
@@ -15,7 +16,7 @@ import (
 
 type Controller struct {
 	server                    vCore.Core
-	apiClient                 *panel.Client
+	apiClient                 apiclient.NodeAPI
 	tag                       string
 	limiter                   *limiter.Limiter
 	traffic                   map[string]int64
@@ -32,7 +33,7 @@ type Controller struct {
 }
 
 // NewController return a Node controller with default parameters.
-func NewController(server vCore.Core, api *panel.Client, config *conf.Options) *Controller {
+func NewController(server vCore.Core, api apiclient.NodeAPI, config *conf.Options) *Controller {
 	controller := &Controller{
 		server:    server,
 		Options:   config,
@@ -48,6 +49,9 @@ func (c *Controller) Start() error {
 	node, err := c.apiClient.GetNodeInfo()
 	if err != nil {
 		return fmt.Errorf("get node info error: %s", err)
+	}
+	if node != nil && node.Type != "" {
+		c.apiClient.SetNodeType(node.Type)
 	}
 	// Update user
 	c.userList, err = c.apiClient.GetUserList()
@@ -97,10 +101,12 @@ func (c *Controller) Start() error {
 	c.info = node
 	c.startTasks(node)
 
-	c.syncManager = NewSyncManager(c.apiClient, c, c.buildSyncConfig())
-	if err := c.syncManager.Start(); err != nil {
-		c.syncManager = nil
-		return fmt.Errorf("start sync manager error: %w", err)
+	if c.apiClient.SupportsSync() {
+		c.syncManager = NewSyncManager(c.apiClient, c, c.buildSyncConfig())
+		if err := c.syncManager.Start(); err != nil {
+			c.syncManager = nil
+			return fmt.Errorf("start sync manager error: %w", err)
+		}
 	}
 
 	return nil
@@ -135,11 +141,14 @@ func (c *Controller) Close() error {
 	if err := c.server.DelNode(c.tag); err != nil {
 		closeErr = errors.Join(closeErr, fmt.Errorf("del node error: %w", err))
 	}
+	if err := c.apiClient.Close(); err != nil {
+		closeErr = errors.Join(closeErr, fmt.Errorf("close api client error: %w", err))
+	}
 	return closeErr
 }
 
 func (c *Controller) buildNodeTag(node *panel.NodeInfo) string {
-	return fmt.Sprintf("[%s]-%s:%d", c.apiClient.APIHost, node.Type, node.Id)
+	return fmt.Sprintf("[%s]-%s:%d", c.apiClient.GetAPIHost(), node.Type, node.Id)
 }
 
 func (c *Controller) buildSyncConfig() *SyncConfig {

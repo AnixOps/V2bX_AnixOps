@@ -24,13 +24,18 @@ type rawNodeConfig struct {
 }
 
 type ApiConfig struct {
-	APIHost      string `json:"ApiHost"`
-	APISendIP    string `json:"ApiSendIP"`
-	NodeID       int    `json:"NodeID"`
-	NodeType     string `json:"NodeType"`
-	Key          string `json:"ApiKey"`
-	Timeout      int    `json:"Timeout"`
-	RuleListPath string `json:"RuleListPath"`
+	APIHost        string `json:"ApiHost"`
+	APISendIP      string `json:"ApiSendIP"`
+	Transport      string `json:"Transport"` // http | grpc
+	GRPCHost       string `json:"GRPCHost"`  // optional explicit grpc target host:port
+	GRPCUseTLS     bool   `json:"GRPCUseTLS"`
+	GRPCServerName string `json:"GRPCServerName"`
+	GRPCKeepalive  int    `json:"GRPCKeepalive"` // seconds
+	NodeID         int    `json:"NodeID"`
+	NodeType       string `json:"NodeType"`
+	Key            string `json:"ApiKey"`
+	Timeout        int    `json:"Timeout"`
+	RuleListPath   string `json:"RuleListPath"`
 
 	// 鑷姩鍙戠幇鐩稿叧閰嶇疆
 	AuthKey           string `json:"AuthKey"`           // 鎺堟潈瀵嗛挜 (棣栨娉ㄥ唽浣跨敤)
@@ -90,8 +95,10 @@ func (n *NodeConfig) UnmarshalJSON(data []byte) (err error) {
 	}
 
 	n.ApiConfig = ApiConfig{
-		APIHost: "http://127.0.0.1",
-		Timeout: 30,
+		APIHost:       "http://127.0.0.1",
+		Transport:     "http",
+		GRPCKeepalive: 30,
+		Timeout:       30,
 	}
 	if len(rn.ApiRaw) > 0 {
 		err = json.Unmarshal(rn.ApiRaw, &n.ApiConfig)

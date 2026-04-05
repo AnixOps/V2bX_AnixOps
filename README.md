@@ -139,3 +139,39 @@ UniProxy 鉴权约定：
 - [V2Fly](https://github.com/v2fly)
 - [XrayR](https://github.com/XrayR/XrayR)
 - [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
+
+## gRPC transport (official)
+
+Node API transport can now be selected by `Transport` in each node config:
+
+- `Transport: "http"` (default, keeps existing REST + WebSocket behavior)
+- `Transport: "grpc"` (uses gRPC APIs)
+
+Example gRPC fields:
+
+```json
+{
+  "ApiHost": "https://panel.example.com",
+  "Transport": "grpc",
+  "GRPCHost": "panel.example.com:443",
+  "GRPCUseTLS": true,
+  "GRPCServerName": "panel.example.com",
+  "GRPCKeepalive": 30,
+  "NodeID": 1,
+  "ApiKey": "your-api-key"
+}
+```
+
+Notes:
+
+- If `GRPCHost` is empty, runtime will try to derive gRPC target from `ApiHost`.
+- gRPC mode keeps periodic pull/report tasks (`PullInterval` / `PushInterval`).
+- WebSocket sync manager is currently enabled only for REST transport.
+- Auto-register and credential storage (plain/encrypted) are supported in gRPC mode.
+- Outgoing gRPC metadata includes `x-api-key`, `x-node-id`, and `x-node-type`.
+
+Proto and codegen:
+
+- Proto source: `api/grpc/v2board.proto`
+- Regenerate stubs (Linux/macOS): `bash api/grpc/gen.sh`
+- Regenerate stubs (Windows): `powershell -ExecutionPolicy Bypass -File api/grpc/gen.ps1`

@@ -45,7 +45,7 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 			Interval: time.Duration(c.LimitConfig.DynamicSpeedLimitConfig.Periodic) * time.Second,
 			Execute:  c.SpeedChecker,
 		}
-		log.Printf("[NodeID: %d] Start dynamic speed limit", c.apiClient.NodeId)
+		log.Printf("[NodeID: %d] Start dynamic speed limit", c.apiClient.GetNodeID())
 	}
 }
 
@@ -58,6 +58,9 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			"err": err,
 		}).Error("Get node info failed")
 		return nil
+	}
+	if newN != nil && newN.Type != "" {
+		c.apiClient.SetNodeType(newN.Type)
 	}
 	// get user info
 	newU, err := c.apiClient.GetUserList()

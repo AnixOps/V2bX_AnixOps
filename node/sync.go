@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	apiclient "github.com/InazumaV/V2bX/api/client"
 	"github.com/InazumaV/V2bX/api/panel"
 	"github.com/InazumaV/V2bX/common/sign"
 	vCore "github.com/InazumaV/V2bX/core"
@@ -90,7 +91,7 @@ func DefaultSyncConfig() *SyncConfig {
 
 // SyncManager 鍚屾绠＄悊鍣?
 type SyncManager struct {
-	client     *panel.Client
+	client     apiclient.NodeAPI
 	controller *Controller
 	config     *SyncConfig
 
@@ -137,7 +138,7 @@ type pendingAck struct {
 }
 
 // NewSyncManager 鍒涘缓鍚屾绠＄悊鍣?
-func NewSyncManager(client *panel.Client, controller *Controller, config *SyncConfig) *SyncManager {
+func NewSyncManager(client apiclient.NodeAPI, controller *Controller, config *SyncConfig) *SyncManager {
 	if config == nil {
 		config = DefaultSyncConfig()
 	}
@@ -298,7 +299,7 @@ func normalizeIncomingMessageType(messageType panel.SyncMessageType) panel.SyncM
 }
 
 func (sm *SyncManager) buildWSURL(endpoint string) string {
-	baseURL := sm.client.APIHost
+	baseURL := sm.client.GetAPIHost()
 
 	// 鏇挎崲 http -> ws, https -> wss
 	baseURL = strings.Replace(baseURL, "https://", "wss://", 1)
@@ -311,7 +312,7 @@ func (sm *SyncManager) buildWSURL(endpoint string) string {
 	}
 
 	q := u.Query()
-	q.Set("node_id", strconv.Itoa(sm.client.NodeId))
+	q.Set("node_id", strconv.Itoa(sm.client.GetNodeID()))
 	u.RawQuery = q.Encode()
 
 	return u.String()
@@ -320,12 +321,12 @@ func (sm *SyncManager) buildWSURL(endpoint string) string {
 // buildHeaders 鏋勫缓璇锋眰澶?
 func (sm *SyncManager) buildHeaders(endpoint string) http.Header {
 	headers := http.Header{}
-	headers.Set("X-API-Key", sm.client.Token)
-	headers.Set("X-Node-ID", strconv.Itoa(sm.client.NodeId))
+	headers.Set("X-API-Key", sm.client.GetAPIKey())
+	headers.Set("X-Node-ID", strconv.Itoa(sm.client.GetNodeID()))
 
 	// 娣诲姞绛惧悕
-	if sm.client.EnableSign && sm.client.Secret != "" {
-		signer := sign.NewSigner(sm.client.Secret)
+	if sm.client.IsSignEnabled() && sm.client.GetSecret() != "" {
+		signer := sign.NewSigner(sm.client.GetSecret())
 		signData := signer.Sign("GET", endpoint, nil)
 		headers.Set("X-Timestamp", signData.Timestamp)
 		headers.Set("X-Nonce", signData.Nonce)
@@ -647,7 +648,7 @@ func (sm *SyncManager) handlePing(msg *panel.SyncMessage) error {
 		Latency:    time.Now().UnixMilli() - payload.ServerTime*1000,
 	}
 
-	pongMsg, _ := panel.NewSyncMessage(panel.MsgTypePong, sm.client.NodeId, pong)
+	pongMsg, _ := panel.NewSyncMessage(panel.MsgTypePong, sm.client.GetNodeID(), pong)
 	sm.outbound <- pongMsg
 
 	return nil
@@ -714,7 +715,7 @@ func (sm *SyncManager) sendAck(msgID string, err error) {
 		payload.Error = err.Error()
 	}
 
-	ackMsg, _ := panel.NewSyncMessage(panel.MsgTypeAck, sm.client.NodeId, payload)
+	ackMsg, _ := panel.NewSyncMessage(panel.MsgTypeAck, sm.client.GetNodeID(), payload)
 	sm.outbound <- ackMsg
 }
 
@@ -725,7 +726,7 @@ func (sm *SyncManager) sendHeartbeat() error {
 		Version: "1.0.0", // TODO: 浣跨敤瀹為檯鐗堟湰
 	}
 
-	msg, _ := panel.NewSyncMessage(panel.MsgTypeHeartbeat, sm.client.NodeId, payload)
+	msg, _ := panel.NewSyncMessage(panel.MsgTypeHeartbeat, sm.client.GetNodeID(), payload)
 	sm.outbound <- msg
 
 	return nil

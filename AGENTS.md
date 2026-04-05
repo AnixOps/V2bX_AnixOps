@@ -341,3 +341,33 @@ V2bX server -c /etc/V2bX/config.json
 ## 前端项目
 
 配套前端项目：`v2board_AnixOps`
+
+## gRPC 正式接入说明（2026-04）
+
+### 传输模式
+
+节点 `ApiConfig` 新增 `Transport` 字段：
+
+- `http`（默认）: 走原有 REST API + WebSocket Sync
+- `grpc`: 走 gRPC 接口
+
+新增字段：
+
+- `GRPCHost`: gRPC 目标地址（`host:port`）
+- `GRPCUseTLS`: 是否启用 TLS
+- `GRPCServerName`: TLS SNI / 证书校验域名
+- `GRPCKeepalive`: gRPC keepalive 秒数
+
+### 运行行为
+
+- gRPC 模式下，节点信息与用户/流量/在线上报通过 gRPC 处理。
+- SyncManager（WebSocket）当前只在 REST 传输下启用；gRPC 传输使用定时轮询与上报任务。
+- gRPC 自动注册复用现有凭证机制，支持明文或加密凭证存储。
+
+### 协议与生成
+
+- Proto 文件已纳入仓库：`api/grpc/v2board.proto`
+- 生成脚本：
+  - Linux/macOS: `api/grpc/gen.sh`
+  - Windows: `api/grpc/gen.ps1`
+- 生成输出目录：`api/grpc/v2boardpb/`
