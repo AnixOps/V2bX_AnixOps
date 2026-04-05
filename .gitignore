@@ -25,3 +25,9 @@ test_data/*
 .vscode/
 .claude/
 
+# Local runtime secrets and machine-specific configs
+config.json
+node/*.key
+node/*.pem
+node/cert/
+

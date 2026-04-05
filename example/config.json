@@ -22,7 +22,7 @@
     {
       "Core": "sing",
       "ApiHost": "http://127.0.0.1",
-      "ApiKey": "test",
+      "ApiKey": "your-api-key",
       "NodeID": 33,
       "Timeout": 30,
       "ListenIP": "0.0.0.0",
