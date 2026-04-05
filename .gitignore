@@ -31,3 +31,6 @@ node/*.key
 node/*.pem
 node/cert/
 
+# Experimental local gRPC scaffold (not integrated yet)
+api/grpc/
+
