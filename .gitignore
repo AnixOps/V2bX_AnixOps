@@ -27,8 +27,12 @@ test_data/*
 
 # Local runtime secrets and machine-specific configs
 config.json
+config.local*.json
 node/*.key
 node/*.pem
 node/cert/
+data/*.enc
+build/
+logs/
 
 
