@@ -29,6 +29,7 @@ type Controller struct {
 	dynamicSpeedLimitPeriodic *task.Task
 	onlineIpReportPeriodic    *task.Task
 	syncManager               *SyncManager
+	logHook                   *RemoteLogHook
 	*conf.Options
 }
 
@@ -70,6 +71,8 @@ func (c *Controller) Start() error {
 	} else {
 		c.tag = c.Options.Name
 	}
+	c.logHook = NewRemoteLogHook(c.apiClient, c.tag)
+	log.StandardLogger().AddHook(c.logHook)
 
 	// add limiter
 	l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, c.aliveMap)
@@ -137,6 +140,10 @@ func (c *Controller) Close() error {
 	}
 	if c.onlineIpReportPeriodic != nil {
 		c.onlineIpReportPeriodic.Close()
+	}
+	if c.logHook != nil {
+		c.logHook.Close()
+		c.logHook = nil
 	}
 	if err := c.server.DelNode(c.tag); err != nil {
 		closeErr = errors.Join(closeErr, fmt.Errorf("del node error: %w", err))

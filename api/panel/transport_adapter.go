@@ -1,5 +1,7 @@
 package panel
 
+import "github.com/InazumaV/V2bX/common/monitor"
+
 // Close implements api/client.NodeAPI.
 // REST transport has no persistent connection to close.
 func (c *Client) Close() error { return nil }
@@ -29,3 +31,11 @@ func (c *Client) SetNodeType(nodeType string) {
 
 // SupportsSync implements api/client.NodeAPI.
 func (c *Client) SupportsSync() bool { return true }
+
+// ReportNodeStatus implements api/client.NodeAPI.
+// REST transport does not expose a dedicated node status RPC, so this is a no-op.
+func (c *Client) ReportNodeStatus(_ *monitor.SystemInfo, _ int, _ int64, _ int64) error { return nil }
+
+// ReportNodeLogs implements api/client.NodeAPI.
+// REST transport does not expose a dedicated node log ingestion endpoint, so this is a no-op.
+func (c *Client) ReportNodeLogs(_ []NodeLogEntry) error { return nil }

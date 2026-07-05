@@ -1,6 +1,9 @@
 package client
 
-import "github.com/InazumaV/V2bX/api/panel"
+import (
+	"github.com/InazumaV/V2bX/api/panel"
+	"github.com/InazumaV/V2bX/common/monitor"
+)
 
 // NodeAPI defines the contract required by node controllers regardless of transport.
 // Implementations can be REST (api/panel) or gRPC (api/grpc).
@@ -10,6 +13,8 @@ type NodeAPI interface {
 	GetUserAlive() (map[int]int, error)
 	ReportUserTraffic([]panel.UserTraffic) error
 	ReportNodeOnlineUsers(*map[int][]string) error
+	ReportNodeStatus(*monitor.SystemInfo, int, int64, int64) error
+	ReportNodeLogs([]panel.NodeLogEntry) error
 
 	GetNodeID() int
 	GetAPIHost() string

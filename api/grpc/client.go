@@ -40,6 +40,7 @@ type GRPCClientConfig struct {
 type GRPCClient struct {
 	conn          *grpc.ClientConn
 	nodeClient    pb.NodeServiceClient
+	nodeLogClient NodeLogServiceClient
 	userClient    pb.UserServiceClient
 	trafficClient pb.TrafficServiceClient
 	healthClient  pb.HealthServiceClient
@@ -113,6 +114,7 @@ func NewGRPCClient(cfg *GRPCClientConfig) (*GRPCClient, error) {
 	client := &GRPCClient{
 		conn:          conn,
 		nodeClient:    pb.NewNodeServiceClient(conn),
+		nodeLogClient: NewNodeLogServiceClient(conn),
 		userClient:    pb.NewUserServiceClient(conn),
 		trafficClient: pb.NewTrafficServiceClient(conn),
 		healthClient:  pb.NewHealthServiceClient(conn),
@@ -422,6 +424,10 @@ func (c *GRPCClient) ReportOnline(onlineUsers map[int][]string) error {
 
 // ReportStatus reports node metrics over gRPC.
 func (c *GRPCClient) ReportStatus(stats *monitor.SystemInfo, onlineUsers int, upload, download int64) error {
+	if stats == nil {
+		stats = &monitor.SystemInfo{}
+	}
+
 	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
 	defer cancel()
 
@@ -437,6 +443,25 @@ func (c *GRPCClient) ReportStatus(stats *monitor.SystemInfo, onlineUsers int, up
 	})
 	if err != nil {
 		return fmt.Errorf("grpc report status: %w", err)
+	}
+	return nil
+}
+
+func (c *GRPCClient) ReportNodeLogs(entries []panel.NodeLogEntry) error {
+	if len(entries) == 0 {
+		return nil
+	}
+
+	req, err := newNodeLogBatchMessage(c.nodeID, entries)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
+	defer cancel()
+
+	if _, err := c.nodeLogClient.ReportLogs(c.withAuth(ctx), req); err != nil {
+		return fmt.Errorf("grpc report node logs: %w", err)
 	}
 	return nil
 }
@@ -644,6 +669,10 @@ func (c *GRPCClient) ReportNodeOnlineUsers(data *map[int][]string) error {
 		return nil
 	}
 	return c.ReportOnline(*data)
+}
+
+func (c *GRPCClient) ReportNodeStatus(stats *monitor.SystemInfo, onlineUsers int, upload, download int64) error {
+	return c.ReportStatus(stats, onlineUsers, upload, download)
 }
 
 func (c *GRPCClient) GetNodeID() int { return c.nodeID }

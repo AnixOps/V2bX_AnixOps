@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/InazumaV/V2bX/api/panel"
+	"github.com/InazumaV/V2bX/common/monitor"
 	"github.com/InazumaV/V2bX/common/task"
 	vCore "github.com/InazumaV/V2bX/core"
 	"github.com/InazumaV/V2bX/limiter"
@@ -173,6 +174,17 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 	// update alive list
 	if newA != nil {
 		c.limiter.AliveList = newA
+	}
+	if stats, statsErr := monitor.GetSystemInfo(); statsErr != nil {
+		log.WithFields(log.Fields{
+			"tag": c.tag,
+			"err": statsErr,
+		}).Warn("Get system info failed")
+	} else if err = c.apiClient.ReportNodeStatus(stats, 0, 0, 0); err != nil {
+		log.WithFields(log.Fields{
+			"tag": c.tag,
+			"err": err,
+		}).Warn("Report node status failed")
 	}
 	// node no changed, check users
 	if len(newU) == 0 {

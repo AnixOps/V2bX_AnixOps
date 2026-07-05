@@ -86,6 +86,20 @@ message NodeStatusRequest {
   int64 download = 8;            // 鏈涓婃姤鐨勪笅杞芥祦閲忓閲?
 }
 
+message NodeLogEntry {
+  string level = 1;
+  string source = 2;
+  string message = 3;
+  int64 timestamp = 4;
+  string fields_json = 5;
+  string trace_id = 6;
+}
+
+message NodeLogBatchRequest {
+  uint32 node_id = 1;
+  repeated NodeLogEntry logs = 2;
+}
+
 // 鑺傜偣鏈嶅姟
 service NodeService {
   // 鑺傜偣娉ㄥ唽
@@ -99,6 +113,10 @@ service NodeService {
 
   // 鍙屽悜娴侊細鑺傜偣鐘舵€佸疄鏃堕€氫俊
   rpc StatusStream(stream NodeStatusRequest) returns (stream NodeConfigResponse);
+}
+
+service NodeLogService {
+  rpc ReportLogs(NodeLogBatchRequest) returns (StatusResponse);
 }
 
 // ==================== 鐢ㄦ埛鏈嶅姟 ====================
