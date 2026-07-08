@@ -127,6 +127,7 @@ UniProxy 鉴权约定：
 
 - [API 文档](./docs/API_DOCUMENTATION.md)
 - [后端 API 问题分析](./docs/BACKEND_API_ISSUES.md)
+- [v2.3.1 到 v2.5.0 发布规划](./docs/RELEASE_PLAN_2.3.1_TO_2.5.0.md)
 - `docs/PROTOCOL_CONFIG_*.md` 协议配置规范
 
 ## 贡献

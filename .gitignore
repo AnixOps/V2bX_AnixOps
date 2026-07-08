@@ -17,6 +17,10 @@ output/*
 newV2bX.sh
 quic_singbox.sh
 V2bX_windows_amd64.exe
+V2bX
+V2bX.exe
+*.log
+config.debug.json
 data/credential.json.enc
 test_data/
 test_data/*
@@ -34,5 +38,4 @@ node/cert/
 data/*.enc
 build/
 logs/
-
 
