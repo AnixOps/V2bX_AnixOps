@@ -175,6 +175,60 @@ func mapToRawJSONStringMap(m map[string]string) json.RawMessage {
 	return b
 }
 
+func parseIntDefault(value string, fallback int) int {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
+func parseStringList(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	var out []string
+	if strings.HasPrefix(value, "[") {
+		if err := json.Unmarshal([]byte(value), &out); err == nil {
+			return compactStringList(out)
+		}
+	}
+	return compactStringList(strings.Split(value, ","))
+}
+
+func compactStringList(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func parseWireGuardRelay(value string) panel.WireGuardRelay {
+	var relay panel.WireGuardRelay
+	if strings.TrimSpace(value) == "" {
+		return relay
+	}
+	_ = json.Unmarshal([]byte(value), &relay)
+	return relay
+}
+
+func firstExtraValue(extra map[string]string, keys ...string) string {
+	for _, key := range keys {
+		if value := extra[key]; value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func parseRules(routes []*pb.Route) (rules panel.Rules, parsed []panel.Route) {
 	parsed = make([]panel.Route, 0, len(routes))
 	for i, r := range routes {
@@ -354,6 +408,22 @@ func (c *GRPCClient) GetNodeConfig() (*panel.NodeInfo, error) {
 	case "hysteria2":
 		node.Hysteria2 = &panel.Hysteria2Node{CommonNode: common}
 		node.Security = panel.Tls
+
+	case "wireguard":
+		extra := resp.GetExtra()
+		node.WireGuard = &panel.WireGuardNode{
+			CommonNode:       common,
+			CIDR:             extra["cidr"],
+			ServerAddress:    extra["server_address"],
+			ServerPrivateKey: extra["server_private_key"],
+			ServerPublicKey:  extra["server_public_key"],
+			MTU:              parseIntDefault(extra["mtu"], 1280),
+			DNS:              parseStringList(extra["dns"]),
+			AllowedIPs:       parseStringList(extra["allowed_ips"]),
+			TunnelType:       extra["tunnel_type"],
+			Relay:            parseWireGuardRelay(extra["relay"]),
+		}
+		node.Security = panel.None
 	}
 
 	return node, nil
@@ -378,10 +448,14 @@ func (c *GRPCClient) GetUsers() ([]panel.UserInfo, error) {
 			continue
 		}
 		users = append(users, panel.UserInfo{
-			Id:          int(u.GetId()),
-			Uuid:        u.GetUuid(),
-			SpeedLimit:  int(u.GetSpeedLimit()),
-			DeviceLimit: int(u.GetDeviceLimit()),
+			Id:                    int(u.GetId()),
+			Uuid:                  u.GetUuid(),
+			SpeedLimit:            int(u.GetSpeedLimit()),
+			DeviceLimit:           int(u.GetDeviceLimit()),
+			WireGuardPeerIP:       u.GetExtra()["wireguard_peer_ip"],
+			WireGuardPublicKey:    firstExtraValue(u.GetExtra(), "wireguard_public_key", "wireguard_peer_public_key"),
+			WireGuardPresharedKey: u.GetExtra()["wireguard_preshared_key"],
+			Extra:                 u.GetExtra(),
 		})
 	}
 	return users, nil

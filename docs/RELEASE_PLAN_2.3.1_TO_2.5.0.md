@@ -15,6 +15,22 @@ This plan defines the release line after `v2.3.1`. The target is to make `v2.5.0
 
 ## Version Targets
 
+### P0 WireGuard Runtime Interlock
+
+Purpose: close the immediate gap where the panel can issue WireGuard subscriptions but V2bX cannot apply the entry runtime.
+
+Scope:
+- Parse `wireguard` node configs over REST and gRPC.
+- Receive panel-managed peer IP, peer public key, and preshared key from user sync.
+- Add a `wireguard` core that applies the Linux WireGuard interface through `ip` and `wg`.
+- Report peer traffic deltas from `wg show <iface> transfer`.
+- Keep the target path documented as `WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas exit NAT`.
+
+Known remaining gaps:
+- Full GOST relay+QUIC route orchestration, WSS compatibility mode, overseas exit NAT, online-state integration, and speed-limit enforcement need real integration evidence.
+- WSS remains compatibility mode, not the default.
+- Release builds must still come from GitHub Actions only.
+
 ### v2.3.2 - Patch Stabilization
 
 Purpose: close the immediate gap after `v2.3.1` and make the current release safer to install.

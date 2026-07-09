@@ -18,7 +18,7 @@
 配置文件 (config.json)
 ├── Log: 日志配置
 ├── Cores[]: 核心引擎配置 (支持多核心)
-│   ├── Type: xray | sing | hysteria2
+│   ├── Type: xray | sing | hysteria2 | wireguard
 │   └── ... 核心特定配置
 └── Nodes[]: 节点配置 (支持多节点)
     ├── Core: 指定使用的核心
@@ -52,10 +52,10 @@
     ┌───────────────┼───────────────┐            │
     │               │               │            │
     ▼               ▼               ▼            ▼
-┌───────┐     ┌─────────┐    ┌──────────┐  ┌─────────────────┐
-│ xray  │     │  sing   │    │ hysteria2│  │  Controller[]   │
-│ 核心  │     │  核心   │    │   核心   │  │  每个节点一个    │
-└───────┘     └─────────┘    └──────────┘  └───────┬─────────┘
+┌───────┐     ┌─────────┐    ┌──────────┐  ┌────────────┐  ┌─────────────────┐
+│ xray  │     │  sing   │    │ hysteria2│  │ wireguard  │  │  Controller[]   │
+│ 核心  │     │  核心   │    │   核心   │  │ 系统运行时  │  │  每个节点一个    │
+└───────┘     └─────────┘    └──────────┘  └────────────┘  └───────┬─────────┘
                                                    │
                                                    ▼
                                           ┌─────────────────┐
@@ -93,6 +93,9 @@ type Selector struct {
 | anytls | sing | Tls |
 | hysteria | hysteria2 | Tls |
 | hysteria2 | hysteria2 | Tls |
+| wireguard | wireguard | None |
+
+WireGuard core 通过面板下发的节点配置和用户 peer 扩展字段应用入口机 WireGuard 接口。它依赖系统 `ip`、`wg` 命令；GOST relay+QUIC 是默认双机目标路径，WSS 仅为兼容模式。完整海外出口 NAT 和 GOST/WSS 实机链路仍需要集成验证后才能标记生产完成。
 
 ---
 

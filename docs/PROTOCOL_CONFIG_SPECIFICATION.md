@@ -47,12 +47,69 @@
 
 | 字段 | 类型 | 必填 | 描述 |
 |------|------|------|------|
-| `type` | string | ✅ | 协议类型，支持: `vless`, `vmess`, `trojan`, `shadowsocks`, `tuic`, `anytls`, `hysteria`, `hysteria2` |
+| `type` | string | ✅ | 协议类型，支持: `vless`, `vmess`, `trojan`, `shadowsocks`, `tuic`, `anytls`, `hysteria`, `hysteria2`, `wireguard` |
 | `host` | string | ✅ | 服务器主机名或IP |
 | `server_port` | int | ✅ | 服务器端口 |
 | `server_name` | string | ❌ | SNI 服务器名称 |
 | `routes` | array | ❌ | 路由规则数组 |
 | `base_config` | object | ❌ | 基础配置（推送/拉取间隔） |
+
+---
+
+## WireGuard 协议
+
+WireGuard 是 P0 双机入口/出口方案的用户接入协议。当前 V2bX 支持从面板接收 WireGuard 节点配置和用户 peer 字段，在国内入口节点上通过系统 `ip`、`wg` 命令应用 WireGuard 接口与 peer，并用 `wg show <iface> transfer` 解析 peer 流量增量。
+
+目标路径保持为：
+
+```text
+WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas exit NAT
+```
+
+### 节点配置响应格式
+
+```json
+{
+  "type": "wireguard",
+  "node_type": "wireguard",
+  "host": "entry.example.com",
+  "server_port": 51820,
+  "server_name": "entry.example.com",
+  "cidr": "10.66.0.0/24",
+  "server_address": "10.66.0.1/24",
+  "server_private_key": "server-private-key",
+  "server_public_key": "server-public-key",
+  "mtu": 1280,
+  "dns": ["1.1.1.1", "8.8.8.8"],
+  "allowed_ips": ["0.0.0.0/0", "::/0"],
+  "tunnel_type": "quic",
+  "relay": {
+    "backend": "gost",
+    "mode": "relay+quic",
+    "wss_compat": false,
+    "exit_nat": true,
+    "entry_stats": true
+  }
+}
+```
+
+### 用户列表扩展字段
+
+WireGuard 节点的 `/api/v2/server/UniProxy/user` 响应必须为每个用户带上：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `wireguard_peer_ip` | string | ✅ | 面板自动分配的 peer 地址，例如 `10.66.0.2` |
+| `wireguard_public_key` | string | ✅ | 用户 peer 公钥，用于入口节点 `[Peer] PublicKey` |
+| `wireguard_preshared_key` | string | ✅ | 用户 peer PSK，用于入口节点 `[Peer] PresharedKey` |
+
+用户私钥不下发给 V2bX，只用于订阅输出。
+
+### 运行前提
+
+- V2bX 配置中需要启用 `wireguard` core。
+- 入口机需要安装 WireGuard 内核支持、`wireguard-tools`、`iproute2`。
+- GOST 双机 relay 仍需要实机验证；WSS 是兼容模式，不是默认模式。
 
 ---
 

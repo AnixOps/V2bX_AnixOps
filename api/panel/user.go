@@ -16,10 +16,14 @@ type OnlineUser struct {
 }
 
 type UserInfo struct {
-	Id          int    `json:"id" msgpack:"id"`
-	Uuid        string `json:"uuid" msgpack:"uuid"`
-	SpeedLimit  int    `json:"speed_limit" msgpack:"speed_limit"`
-	DeviceLimit int    `json:"device_limit" msgpack:"device_limit"`
+	Id                    int               `json:"id" msgpack:"id"`
+	Uuid                  string            `json:"uuid" msgpack:"uuid"`
+	SpeedLimit            int               `json:"speed_limit" msgpack:"speed_limit"`
+	DeviceLimit           int               `json:"device_limit" msgpack:"device_limit"`
+	WireGuardPeerIP       string            `json:"wireguard_peer_ip" msgpack:"wireguard_peer_ip"`
+	WireGuardPublicKey    string            `json:"wireguard_public_key" msgpack:"wireguard_public_key"`
+	WireGuardPresharedKey string            `json:"wireguard_preshared_key" msgpack:"wireguard_preshared_key"`
+	Extra                 map[string]string `json:"extra" msgpack:"extra"`
 }
 
 type UserListBody struct {

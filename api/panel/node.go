@@ -38,6 +38,7 @@ type NodeInfo struct {
 	AnyTls      *AnyTlsNode
 	Hysteria    *HysteriaNode
 	Hysteria2   *Hysteria2Node
+	WireGuard   *WireGuardNode
 	Common      *CommonNode
 }
 
@@ -139,6 +140,29 @@ type Hysteria2Node struct {
 	DownMbps                int    `json:"down_mbps"`
 	ObfsType                string `json:"obfs"`
 	ObfsPassword            string `json:"obfs-password"`
+}
+
+type WireGuardNode struct {
+	CommonNode
+	CIDR             string         `json:"cidr"`
+	ServerAddress    string         `json:"server_address"`
+	ServerPrivateKey string         `json:"server_private_key"`
+	ServerPublicKey  string         `json:"server_public_key"`
+	MTU              int            `json:"mtu"`
+	DNS              []string       `json:"dns"`
+	AllowedIPs       []string       `json:"allowed_ips"`
+	TunnelType       string         `json:"tunnel_type"`
+	Relay            WireGuardRelay `json:"relay"`
+}
+
+type WireGuardRelay struct {
+	Backend    string `json:"backend"`
+	Mode       string `json:"mode"`
+	WSSCompat  bool   `json:"wss_compat"`
+	ExitNAT    bool   `json:"exit_nat"`
+	EntryStats bool   `json:"entry_stats"`
+	Server     string `json:"server"`
+	ServerPort int    `json:"server_port"`
 }
 
 type RawDNS struct {
@@ -322,6 +346,18 @@ func (c *Client) GetNodeInfo() (node *NodeInfo, err error) {
 		cm = &rsp.CommonNode
 		node.Hysteria2 = rsp
 		node.Security = Tls
+	case "wireguard":
+		rsp := &WireGuardNode{}
+		err = json.Unmarshal(r.Body(), rsp)
+		if err != nil {
+			return nil, fmt.Errorf("decode wireguard params error: %s", err)
+		}
+		cm = &rsp.CommonNode
+		node.WireGuard = rsp
+		node.Security = None
+	}
+	if cm == nil {
+		return nil, fmt.Errorf("unsupported node type: %s", protocolType)
 	}
 
 	// parse rules and dns

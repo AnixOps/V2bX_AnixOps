@@ -10,6 +10,7 @@ type CoreConfig struct {
 	XrayConfig      *XrayConfig      `json:"-"`
 	SingConfig      *SingConfig      `json:"-"`
 	Hysteria2Config *Hysteria2Config `json:"-"`
+	WireGuardConfig *WireGuardConfig `json:"-"`
 }
 
 type _CoreConfig CoreConfig
@@ -29,6 +30,9 @@ func (c *CoreConfig) UnmarshalJSON(b []byte) error {
 	case "hysteria2":
 		c.Hysteria2Config = NewHysteria2Config()
 		return json.Unmarshal(b, c.Hysteria2Config)
+	case "wireguard":
+		c.WireGuardConfig = NewWireGuardConfig()
+		return json.Unmarshal(b, c.WireGuardConfig)
 	}
 	return nil
 }
