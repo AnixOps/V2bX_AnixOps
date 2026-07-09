@@ -278,16 +278,20 @@ POST /api/v2/server/UniProxy/alive
 
 ## 构建与部署
 
-### 本地构建
+### 构建与发行
+
+发行构建必须由 GitHub Actions release workflow 生成。生产安装或升级时使用
+GitHub Release 附件，不要在节点机或本地 checkout 里执行 `go build` 生成发行产物。
+
+本地构建脚本只保留给开发验证或紧急人工操作，默认拒绝运行实际构建；如确需使用，
+必须显式 opt-in：
+
 ```bash
 # Linux/macOS
-export GOEXPERIMENT=jsonv2
-export CGO_ENABLED=0
-go build -v -o V2bX -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath
+ALLOW_LOCAL_BUILD=1 ./build.sh -p linux -a amd64
 
-# 或使用脚本
-./build.sh -p linux -a amd64
-./build.sh --all  # 构建所有平台
+# 清理本地构建残留不需要 opt-in
+./build.sh --clean
 ```
 
 ### Docker 部署

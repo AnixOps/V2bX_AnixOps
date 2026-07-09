@@ -1,6 +1,10 @@
 #!/bin/bash
 # V2bX Build Script for Linux/macOS
 # Usage: ./build.sh [-p platform] [-a arch] [--all] [--clean]
+#
+# Release builds must be produced by GitHub Actions. This script is kept for
+# development or emergency operator use only and requires ALLOW_LOCAL_BUILD=1
+# for any build. --clean remains available for removing local build artifacts.
 
 set -e
 
@@ -48,6 +52,9 @@ declare -a PLATFORMS=(
 print_help() {
     echo "Usage: $0 [options]"
     echo ""
+    echo "Release builds must be produced by GitHub Actions release workflows."
+    echo "For development or emergency operator builds, set ALLOW_LOCAL_BUILD=1."
+    echo ""
     echo "Options:"
     echo "  -p, --platform    Target platform (linux, windows, darwin)"
     echo "  -a, --arch        Target architecture (amd64, arm64, 386)"
@@ -61,6 +68,17 @@ print_help() {
     echo "  $0 -p linux -a amd64    # Build for Linux amd64"
     echo "  $0 -t \"xray\"           # Build with only xray core"
     echo "  $0 --all                # Build for all platforms"
+}
+
+require_local_build_opt_in() {
+    if [ "${ALLOW_LOCAL_BUILD:-}" = "1" ]; then
+        return 0
+    fi
+
+    echo -e "${RED}!! build.sh performs a local source-tree build.${NC}" >&2
+    echo -e "${RED}!! Release builds must be produced by GitHub Actions release workflows.${NC}" >&2
+    echo -e "${RED}!! For development or emergency operator use, rerun with ALLOW_LOCAL_BUILD=1.${NC}" >&2
+    return 1
 }
 
 # 解析参数
@@ -105,6 +123,8 @@ if [ "$CLEAN" = true ]; then
     echo -e "${GREEN}Clean completed.${NC}"
     exit 0
 fi
+
+require_local_build_opt_in || exit 1
 
 # 创建输出目录
 mkdir -p "$OUTPUT_DIR"

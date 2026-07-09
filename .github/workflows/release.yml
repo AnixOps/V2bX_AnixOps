@@ -34,6 +34,9 @@ jobs:
       - name: Checkout codebase
         uses: actions/checkout@v4
 
+      - name: Enforce release build policy
+        run: bash scripts/check_release_build_policy.sh
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:

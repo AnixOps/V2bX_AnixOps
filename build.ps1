@@ -1,5 +1,9 @@
 # V2bX Build Script for Windows PowerShell
 # Usage: .\build.ps1 [-Platform <platform>] [-Arch <arch>] [-Tags <tags>] [-All]
+#
+# Release builds must be produced by GitHub Actions. This script is kept for
+# development or emergency operator use only and requires ALLOW_LOCAL_BUILD=1
+# for any build. -Clean remains available for removing local build artifacts.
 
 param(
     [string]$Platform = "windows",
@@ -44,6 +48,14 @@ function Write-ColorOutput {
         [string]$Message
     )
     Write-Host $Message -ForegroundColor $ForegroundColor
+}
+
+function Require-LocalBuildOptIn {
+    if ($env:ALLOW_LOCAL_BUILD -eq "1") {
+        return
+    }
+
+    Write-Error "build.ps1 performs a local source-tree build. Release builds must be produced by GitHub Actions release workflows. For development or emergency operator use, rerun with ALLOW_LOCAL_BUILD=1."
 }
 
 function Build-Binary {
@@ -91,6 +103,8 @@ if ($Clean) {
     Write-ColorOutput -ForegroundColor Green -Message "Clean completed."
     exit 0
 }
+
+Require-LocalBuildOptIn
 
 # 创建输出目录
 if (-not (Test-Path $OutputDir)) {

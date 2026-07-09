@@ -73,27 +73,28 @@ V2bX uninstall [--purge]
 
 参考示例配置：`example/config.json`
 
-### 2. 构建
+### 2. 构建与发行
 
-Linux/macOS:
+发行构建必须由 GitHub Actions release workflow 生成。生产安装或升级时使用 GitHub Release 附件，不要在节点机或本地 checkout 里执行 `go build` 生成发行产物。
+
+本地构建脚本只保留给开发验证或紧急人工操作，默认拒绝运行实际构建；如确需使用，必须显式 opt-in：
 
 ```bash
-export GOEXPERIMENT=jsonv2
-export CGO_ENABLED=0
-go build -v -o V2bX -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath
+ALLOW_LOCAL_BUILD=1 ./build.sh -p linux -a amd64
 ```
 
-Windows (PowerShell):
+Windows PowerShell：
 
 ```powershell
-$env:GOEXPERIMENT="jsonv2"
-$env:CGO_ENABLED="0"
-go build -v -o V2bX.exe -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath
+$env:ALLOW_LOCAL_BUILD="1"
+.\build.ps1 -Platform windows -Arch amd64
 ```
 
-或直接使用仓库脚本：
-- Linux/macOS: `./build.sh`
-- Windows: `./build.ps1`
+清理本地构建残留可直接运行，不需要 opt-in：
+
+```bash
+./build.sh --clean
+```
 
 ### 3. 运行
 

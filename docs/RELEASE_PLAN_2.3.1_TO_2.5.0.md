@@ -119,6 +119,7 @@ Required before `v2.5.0`:
 Run before every tag:
 
 ```bash
+bash scripts/check_release_build_policy.sh
 GOEXPERIMENT=jsonv2 GOWORK=off go test ./...
 GOEXPERIMENT=jsonv2 GOWORK=off go test -run TestNonExistent ./...
 git status --short
@@ -127,10 +128,9 @@ git diff --check
 
 For release candidates:
 
-```bash
-GOEXPERIMENT=jsonv2 GOWORK=off ./build.sh -p linux -a amd64
-GOEXPERIMENT=jsonv2 GOWORK=off ./build.sh -p linux -a arm64
-```
+- Trigger the GitHub Actions release workflow from the candidate commit or tag.
+- Verify the uploaded `V2bX-linux-64.zip` and `V2bX-linux-arm64-v8a.zip` artifacts.
+- Do not build release candidates from a local checkout.
 
 Tag only after the release notes include:
 

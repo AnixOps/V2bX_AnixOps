@@ -15,6 +15,15 @@ jobs:
       - name: Checkout codebase
         uses: actions/checkout@v4
 
+      - name: Validate release build policy script syntax
+        run: bash -n scripts/check_release_build_policy.sh
+
+      - name: Run release build policy self-test
+        run: bash scripts/check_release_build_policy.sh --self-test
+
+      - name: Enforce release build policy
+        run: bash scripts/check_release_build_policy.sh
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
