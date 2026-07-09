@@ -94,23 +94,27 @@ func generateSelfSslCertificate(domain, certPath, keyPath string) error {
 	if err != nil {
 		return err
 	}
-	err = pem.Encode(f, &pem.Block{
+	if err = pem.Encode(f, &pem.Block{
 		Type:  "CERTIFICATE",
 		Bytes: cert,
-	})
-	if err != nil {
+	}); err != nil {
+		_ = f.Close()
 		return err
 	}
+	if err = f.Close(); err != nil {
+		return err
+	}
+
 	f, err = os.OpenFile(keyPath, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return err
 	}
-	err = pem.Encode(f, &pem.Block{
+	if err = pem.Encode(f, &pem.Block{
 		Type:  "EC PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
-	})
-	if err != nil {
+	}); err != nil {
+		_ = f.Close()
 		return err
 	}
-	return nil
+	return f.Close()
 }

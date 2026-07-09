@@ -42,9 +42,9 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Compile (go test)
+      - name: Run full Go test suite
         # Make CI robust if a go.work exists in the runner environment.
-        run: GOEXPERIMENT=jsonv2 GOWORK=off go test -run TestNonExistent ./...
+        run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./... -count=1
 
       - name: Install protoc
         run: |

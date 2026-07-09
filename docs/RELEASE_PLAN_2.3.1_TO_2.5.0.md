@@ -122,7 +122,6 @@ Run before every tag:
 bash scripts/check_release_build_policy.sh
 git ls-files '*.go' | xargs gofmt -l
 GOEXPERIMENT=jsonv2 GOWORK=off go test ./...
-GOEXPERIMENT=jsonv2 GOWORK=off go test -run TestNonExistent ./...
 git status --short
 git diff --check
 ```

@@ -15,6 +15,27 @@ func (p *Conf) Watch(filePath, xDnsPath string, sDnsPath string, reload func()) 
 	if err != nil {
 		return fmt.Errorf("new watcher error: %s", err)
 	}
+
+	err = watcher.Add(filePath)
+	if err != nil {
+		watcher.Close()
+		return fmt.Errorf("watch file error: %s", err)
+	}
+	if xDnsPath != "" {
+		err = watcher.Add(xDnsPath)
+		if err != nil {
+			watcher.Close()
+			return fmt.Errorf("watch dns file error: %s", err)
+		}
+	}
+	if sDnsPath != "" {
+		err = watcher.Add(sDnsPath)
+		if err != nil {
+			watcher.Close()
+			return fmt.Errorf("watch dns file error: %s", err)
+		}
+	}
+
 	go func() {
 		var pre time.Time
 		defer watcher.Close()
@@ -51,21 +72,5 @@ func (p *Conf) Watch(filePath, xDnsPath string, sDnsPath string, reload func()) 
 			}
 		}
 	}()
-	err = watcher.Add(filePath)
-	if err != nil {
-		return fmt.Errorf("watch file error: %s", err)
-	}
-	if xDnsPath != "" {
-		err = watcher.Add(xDnsPath)
-		if err != nil {
-			return fmt.Errorf("watch dns file error: %s", err)
-		}
-	}
-	if sDnsPath != "" {
-		err = watcher.Add(sDnsPath)
-		if err != nil {
-			return fmt.Errorf("watch dns file error: %s", err)
-		}
-	}
 	return nil
 }
