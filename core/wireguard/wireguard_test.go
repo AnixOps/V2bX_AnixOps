@@ -13,9 +13,10 @@ import (
 )
 
 type fakeExecutor struct {
-	commands []string
-	starts   []string
-	outputs  map[string][]byte
+	commands     []string
+	starts       []string
+	outputs      map[string][]byte
+	failContains []string
 }
 
 func (f *fakeExecutor) Run(name string, args ...string) error {
@@ -23,6 +24,11 @@ func (f *fakeExecutor) Run(name string, args ...string) error {
 	f.commands = append(f.commands, cmd)
 	if strings.Contains(cmd, " link show ") {
 		return errors.New("missing")
+	}
+	for _, pattern := range f.failContains {
+		if strings.Contains(cmd, pattern) {
+			return errors.New("forced failure")
+		}
 	}
 	return nil
 }
@@ -221,6 +227,111 @@ func TestParseDumpOnlineSupportsIPv6Endpoint(t *testing.T) {
 	online := parseDumpOnline(out, map[string]int{"peer-public": 7}, now, 180)
 	if len(online) != 1 || online[0].UID != 7 || online[0].IP != "2001:db8::1" {
 		t.Fatalf("online users = %#v", online)
+	}
+}
+
+func TestWireGuard_AddNodeStartsGostEntryAndPolicyRoute(t *testing.T) {
+	exec := &fakeExecutor{}
+	core := &WireGuard{
+		cfg: &conf.WireGuardConfig{
+			RuntimeDir:   t.TempDir(),
+			WGPath:       "wg",
+			IPPath:       "ip",
+			IPTablesPath: "iptables",
+			SysctlPath:   "sysctl",
+			GostPath:     "gost",
+		},
+		executor: exec,
+		nodes:    make(map[string]*nodeState),
+	}
+	node := testNodeInfo()
+	node.WireGuard.CIDR = "10.66.0.0/24"
+	node.WireGuard.Relay = panel.WireGuardRelay{
+		Backend:         "gost",
+		Role:            "entry",
+		Server:          "exit.example.com",
+		ServerPort:      8443,
+		TunPort:         8421,
+		EntryTunAddress: "172.31.66.2/24",
+		TunName:         "gtwgtest",
+		RoutingTable:    32010,
+		RoutingPriority: 12010,
+	}
+
+	if err := core.AddNode("test-node", node, &conf.Options{}); err != nil {
+		t.Fatalf("AddNode() error = %v", err)
+	}
+
+	starts := strings.Join(exec.starts, "\n")
+	for _, want := range []string{
+		"gost -L tun://:0/:8421?net=172.31.66.2/24&name=gtwgtest&mtu=1280 -F relay+quic://exit.example.com:8443",
+	} {
+		if !strings.Contains(starts, want) {
+			t.Fatalf("starts missing %q:\n%s", want, starts)
+		}
+	}
+	joined := strings.Join(exec.commands, "\n")
+	for _, want := range []string{
+		"sysctl -w net.ipv4.ip_forward=1",
+		"ip route replace default dev gtwgtest table 32010",
+		"ip rule add from 10.66.0.0/24 table 32010 priority 12010",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("commands missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestWireGuard_AddNodeStartsGostExitAndNAT(t *testing.T) {
+	exec := &fakeExecutor{
+		failContains: []string{"iptables -t nat -C", "iptables -C FORWARD"},
+	}
+	core := &WireGuard{
+		cfg: &conf.WireGuardConfig{
+			RuntimeDir:   t.TempDir(),
+			WGPath:       "wg",
+			IPPath:       "ip",
+			IPTablesPath: "iptables",
+			SysctlPath:   "sysctl",
+			GostPath:     "gost",
+		},
+		executor: exec,
+		nodes:    make(map[string]*nodeState),
+	}
+	node := testNodeInfo()
+	node.WireGuard.CIDR = "10.66.0.0/24"
+	node.WireGuard.Relay = panel.WireGuardRelay{
+		Backend:         "gost",
+		Role:            "exit",
+		ServerPort:      8443,
+		TunPort:         8421,
+		EntryTunAddress: "172.31.66.2/24",
+		ExitTunAddress:  "172.31.66.1/24",
+		TunName:         "gtwgexit",
+		ExitNAT:         true,
+		OutboundIface:   "eth0",
+	}
+
+	if err := core.AddNode("exit-node", node, &conf.Options{}); err != nil {
+		t.Fatalf("AddNode() error = %v", err)
+	}
+
+	starts := strings.Join(exec.starts, "\n")
+	for _, want := range []string{
+		"gost -L tun://:8421?net=172.31.66.1/24&name=gtwgexit&mtu=1280&route=10.66.0.0/24&gw=172.31.66.2 -L relay+quic://:8443?bind=true",
+	} {
+		if !strings.Contains(starts, want) {
+			t.Fatalf("starts missing %q:\n%s", want, starts)
+		}
+	}
+	joined := strings.Join(exec.commands, "\n")
+	for _, want := range []string{
+		"iptables -t nat -A POSTROUTING -s 10.66.0.0/24 -o eth0 -j MASQUERADE",
+		"iptables -A FORWARD -i gtwgexit -o eth0 -j ACCEPT",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("commands missing %q:\n%s", want, joined)
+		}
 	}
 }
 

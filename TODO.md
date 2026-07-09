@@ -7,9 +7,10 @@
 - [x] Add a `wireguard` core that applies Linux WireGuard interfaces with `ip` and `wg`.
 - [x] Report peer traffic deltas from `wg show <iface> transfer`.
 - [x] Integrate initial online-state reporting for WireGuard peers from recent `wg show <iface> dump` handshakes.
-- [ ] Complete GOST relay+QUIC route orchestration for the default entry-to-exit tunnel.
-- [ ] Complete GOST relay+WSS compatibility mode; WSS is not the default.
-- [ ] Add overseas exit NAT runtime support and evidence.
+- [x] Add first tested GOST TUN relay runtime slice for entry policy routing and exit NAT command application.
+- [ ] Prove GOST relay+QUIC route orchestration on real domestic-entry and overseas-exit machines.
+- [ ] Prove GOST relay+WSS compatibility mode on real machines; WSS is not the default.
+- [ ] Add overseas exit NAT runtime integration evidence.
 - [ ] Integrate speed-limit enforcement for WireGuard peers.
 - [ ] Add GitHub Actions relay-path verification for `WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas exit NAT`.
 

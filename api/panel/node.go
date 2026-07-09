@@ -156,13 +156,22 @@ type WireGuardNode struct {
 }
 
 type WireGuardRelay struct {
-	Backend    string `json:"backend"`
-	Mode       string `json:"mode"`
-	WSSCompat  bool   `json:"wss_compat"`
-	ExitNAT    bool   `json:"exit_nat"`
-	EntryStats bool   `json:"entry_stats"`
-	Server     string `json:"server"`
-	ServerPort int    `json:"server_port"`
+	Backend         string `json:"backend"`
+	Mode            string `json:"mode"`
+	Role            string `json:"role"`
+	WSSCompat       bool   `json:"wss_compat"`
+	ExitNAT         bool   `json:"exit_nat"`
+	EntryStats      bool   `json:"entry_stats"`
+	Server          string `json:"server"`
+	ServerPort      int    `json:"server_port"`
+	TunName         string `json:"tun_name"`
+	TunPort         int    `json:"tun_port"`
+	TunAddress      string `json:"tun_address"`
+	EntryTunAddress string `json:"entry_tun_address"`
+	ExitTunAddress  string `json:"exit_tun_address"`
+	OutboundIface   string `json:"outbound_iface"`
+	RoutingTable    int    `json:"routing_table"`
+	RoutingPriority int    `json:"routing_priority"`
 }
 
 type RawDNS struct {

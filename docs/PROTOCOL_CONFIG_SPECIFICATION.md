@@ -58,7 +58,7 @@
 
 ## WireGuard 协议
 
-WireGuard 是 P0 双机入口/出口方案的用户接入协议。当前 V2bX 支持从面板接收 WireGuard 节点配置和用户 peer 字段，在国内入口节点上通过系统 `ip`、`wg` 命令应用 WireGuard 接口与 peer，用 `wg show <iface> transfer` 解析 peer 流量增量，并用最近的 `wg show <iface> dump` 握手记录上报 peer 在线状态。
+WireGuard 是 P0 双机入口/出口方案的用户接入协议。当前 V2bX 支持从面板接收 WireGuard 节点配置和用户 peer 字段，在国内入口节点上通过系统 `ip`、`wg` 命令应用 WireGuard 接口与 peer，用 `wg show <iface> transfer` 解析 peer 流量增量，并用最近的 `wg show <iface> dump` 握手记录上报 peer 在线状态。V2bX 还提供首版 GOST TUN relay runtime 切片：入口节点启动 GOST TUN over `relay+quic`/`relay+wss` 并为 WireGuard CIDR 安装源地址策略路由；出口节点启动匹配的 GOST TUN listener 并可为 WireGuard CIDR 应用 iptables NAT。
 
 目标路径保持为：
 
@@ -86,12 +86,37 @@ WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas ex
   "relay": {
     "backend": "gost",
     "mode": "relay+quic",
+    "role": "entry",
     "wss_compat": false,
     "exit_nat": true,
-    "entry_stats": true
+    "entry_stats": true,
+    "server": "exit.example.com",
+    "server_port": 8443,
+    "tun_port": 8421,
+    "entry_tun_address": "172.31.66.2/24",
+    "exit_tun_address": "172.31.66.1/24",
+    "outbound_iface": "eth0",
+    "routing_table": 0,
+    "routing_priority": 0
   }
 }
 ```
+
+`relay.role=entry` expects `relay.server`, `relay.server_port`, `relay.tun_port`, and `relay.entry_tun_address`. It starts:
+
+```text
+gost -L tun://:0/:<tun_port>?net=<entry_tun_address>&name=<tun_name>&mtu=<mtu> -F relay+quic://<server>:<server_port>
+```
+
+Then it enables IPv4 forwarding and installs source-based routing for the WireGuard `cidr` into a dedicated routing table. `tunnel_type=wss` or `relay.wss_compat=true` switches only the entry-to-exit tunnel to `relay+wss`; WSS is compatibility mode, not the default.
+
+`relay.role=exit` expects `relay.tun_port`, `relay.entry_tun_address`, and `relay.exit_tun_address`. It starts:
+
+```text
+gost -L tun://:<tun_port>?net=<exit_tun_address>&name=<tun_name>&mtu=<mtu>&route=<wireguard_cidr>&gw=<entry_tun_ip> -L relay+quic://:<server_port>?bind=true
+```
+
+When `relay.exit_nat=true`, V2bX applies iptables MASQUERADE for the WireGuard CIDR and a FORWARD allow rule for the GOST TUN interface. `relay.outbound_iface` can narrow the FORWARD rule to the public egress interface.
 
 ### 用户列表扩展字段
 
@@ -108,8 +133,9 @@ WireGuard 节点的 `/api/v2/server/UniProxy/user` 响应必须为每个用户�
 ### 运行前提
 
 - V2bX 配置中需要启用 `wireguard` core。
-- 入口机需要安装 WireGuard 内核支持、`wireguard-tools`、`iproute2`。
-- GOST 双机 relay 仍需要实机验证；WSS 是兼容模式，不是默认模式。
+- 入口机需要安装 WireGuard 内核支持、`wireguard-tools`、`iproute2`、GOST。
+- 出口机需要安装 GOST、`iproute2`、`iptables`，并允许内核转发。
+- GOST 双机 relay 仍需要实机和 GitHub Actions relay-path 验证；WSS 是兼容模式，不是默认模式。
 
 ### V2bX WireGuard Core 配置
 
@@ -119,6 +145,8 @@ WireGuard 节点的 `/api/v2/server/UniProxy/user` 响应必须为每个用户�
   "RuntimeDir": "/etc/V2bX/wireguard",
   "WGPath": "wg",
   "IPPath": "ip",
+  "IPTablesPath": "iptables",
+  "SysctlPath": "sysctl",
   "GostPath": "gost",
   "OnlineHandshakeTimeoutSeconds": 180
 }

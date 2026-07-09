@@ -25,10 +25,11 @@ Scope:
 - Add a `wireguard` core that applies the Linux WireGuard interface through `ip` and `wg`.
 - Report peer traffic deltas from `wg show <iface> transfer`.
 - Report initial peer online state from recent `wg show <iface> dump` handshakes through the existing `/alive` path.
+- Add first tested GOST TUN relay runtime slice for entry policy routing, `relay+quic`/`relay+wss` command selection, exit listener command planning, and exit iptables NAT command application.
 - Keep the target path documented as `WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas exit NAT`.
 
 Known remaining gaps:
-- Full GOST relay+QUIC route orchestration, WSS compatibility mode, overseas exit NAT, and speed-limit enforcement need real integration evidence.
+- Real-machine GOST relay+QUIC route orchestration, WSS compatibility mode, overseas exit NAT, and speed-limit enforcement need integration evidence.
 - WSS remains compatibility mode, not the default.
 - Release builds must still come from GitHub Actions only.
 

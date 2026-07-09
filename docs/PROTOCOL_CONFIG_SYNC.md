@@ -95,7 +95,7 @@ type Selector struct {
 | hysteria2 | hysteria2 | Tls |
 | wireguard | wireguard | None |
 
-WireGuard core 通过面板下发的节点配置和用户 peer 扩展字段应用入口机 WireGuard 接口。它依赖系统 `ip`、`wg` 命令；GOST relay+QUIC 是默认双机目标路径，WSS 仅为兼容模式。当前还会从最近的 `wg show <iface> dump` 握手记录合并 peer 在线状态到现有 `/alive` 上报。完整海外出口 NAT、GOST/WSS 实机链路和 peer 限速仍需要集成验证后才能标记生产完成。
+WireGuard core 通过面板下发的节点配置和用户 peer 扩展字段应用入口机 WireGuard 接口。它依赖系统 `ip`、`wg` 命令；GOST relay+QUIC 是默认双机目标路径，WSS 仅为兼容模式。当前还会从最近的 `wg show <iface> dump` 握手记录合并 peer 在线状态到现有 `/alive` 上报。V2bX 已有首版 GOST TUN relay runtime 切片：entry 角色启动 GOST TUN over `relay+quic`/`relay+wss` 并为 WireGuard CIDR 安装策略路由，exit 角色启动匹配 listener 并可应用 iptables NAT。真实 GOST/WSS 双机链路、peer 限速和 GitHub Actions relay-path 验证仍需要补齐后才能标记生产完成。
 
 ---
 
