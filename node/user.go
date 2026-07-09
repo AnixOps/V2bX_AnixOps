@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/InazumaV/V2bX/api/panel"
+	vCore "github.com/InazumaV/V2bX/core"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -22,9 +23,20 @@ func (c *Controller) reportUserTrafficTask() (err error) {
 		}
 	}
 
-	if onlineDevice, err := c.limiter.GetOnlineDevice(); err != nil {
+	onlineDevice, err := c.limiter.GetOnlineDevice()
+	if err != nil {
 		log.Print(err)
-	} else if len(*onlineDevice) > 0 {
+		onlineDevice = &[]panel.OnlineUser{}
+	}
+	coreOnlineDevice, err := c.getCoreOnlineDevice()
+	if err != nil {
+		log.WithFields(log.Fields{
+			"tag": c.tag,
+			"err": err,
+		}).Info("Get core online users failed")
+	}
+	mergedOnlineDevice := mergeOnlineDevices(append(*onlineDevice, coreOnlineDevice...))
+	if len(mergedOnlineDevice) > 0 {
 		// Only report user has traffic > 100kb to allow ping test
 		var result []panel.OnlineUser
 		var nocountUID = make(map[int]struct{})
@@ -50,13 +62,38 @@ func (c *Controller) reportUserTrafficTask() (err error) {
 				"err": err,
 			}).Info("Report online users failed")
 		} else {
-			log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", len(*onlineDevice), len(result))
+			log.WithField("tag", c.tag).Infof("Total %d online users, %d Reported", len(mergedOnlineDevice), len(result))
 			log.WithField("tag", c.tag).Debugf("Online users: %+v", data)
 		}
 	}
 
 	userTraffic = nil
 	return nil
+}
+
+func (c *Controller) getCoreOnlineDevice() ([]panel.OnlineUser, error) {
+	provider, ok := c.server.(vCore.OnlineDeviceProvider)
+	if !ok {
+		return nil, nil
+	}
+	return provider.GetOnlineDevice(c.tag)
+}
+
+func mergeOnlineDevices(users []panel.OnlineUser) []panel.OnlineUser {
+	seen := make(map[string]struct{}, len(users))
+	merged := make([]panel.OnlineUser, 0, len(users))
+	for _, user := range users {
+		if user.UID == 0 || user.IP == "" {
+			continue
+		}
+		key := strconv.Itoa(user.UID) + "\x00" + user.IP
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		merged = append(merged, user)
+	}
+	return merged
 }
 
 func compareUserList(old, new []panel.UserInfo) (deleted, added []panel.UserInfo) {

@@ -2,8 +2,10 @@ package wireguard
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/InazumaV/V2bX/api/panel"
 	"github.com/InazumaV/V2bX/conf"
@@ -168,6 +170,57 @@ func TestWireGuard_GetUserTrafficSliceParsesTransferDeltas(t *testing.T) {
 	}
 	if len(second) != 1 || second[0].Upload != 700 || second[0].Download != 600 {
 		t.Fatalf("second traffic = %#v", second)
+	}
+}
+
+func TestWireGuard_GetOnlineDeviceParsesRecentHandshake(t *testing.T) {
+	now := time.Now().Unix()
+	exec := &fakeExecutor{
+		outputs: map[string][]byte{
+			"wg show wgtest dump": []byte(strings.Join([]string{
+				"server-private server-public 51820 off",
+				"peer-public psk 203.0.113.10:51280 10.66.0.2/32 " + strconv.FormatInt(now-30, 10) + " 1000 2000 0",
+				"old-peer psk 203.0.113.11:51280 10.66.0.3/32 " + strconv.FormatInt(now-600, 10) + " 1000 2000 0",
+				"none-peer psk (none) 10.66.0.4/32 " + strconv.FormatInt(now-20, 10) + " 1000 2000 0",
+				"unknown-peer psk 203.0.113.12:51280 10.66.0.5/32 " + strconv.FormatInt(now-20, 10) + " 1000 2000 0",
+			}, "\n")),
+		},
+	}
+	core := &WireGuard{
+		cfg: &conf.WireGuardConfig{
+			WGPath:                        "wg",
+			OnlineHandshakeTimeoutSeconds: 180,
+		},
+		executor: exec,
+		nodes: map[string]*nodeState{
+			"test-node": {
+				tag:   "test-node",
+				iface: "wgtest",
+				info:  testNodeInfo(),
+				users: map[string]panel.UserInfo{
+					"user-1": {Id: 7, Uuid: "user-1", WireGuardPublicKey: "peer-public"},
+					"user-2": {Id: 8, Uuid: "user-2", WireGuardPublicKey: "old-peer"},
+					"user-3": {Id: 9, Uuid: "user-3", WireGuardPublicKey: "none-peer"},
+				},
+			},
+		},
+	}
+
+	online, err := core.GetOnlineDevice("test-node")
+	if err != nil {
+		t.Fatalf("GetOnlineDevice() error = %v", err)
+	}
+	if len(online) != 1 || online[0].UID != 7 || online[0].IP != "203.0.113.10" {
+		t.Fatalf("online users = %#v", online)
+	}
+}
+
+func TestParseDumpOnlineSupportsIPv6Endpoint(t *testing.T) {
+	now := int64(1700000000)
+	out := []byte("peer-public psk [2001:db8::1]:51280 10.66.0.2/32 1699999990 1000 2000 0\n")
+	online := parseDumpOnline(out, map[string]int{"peer-public": 7}, now, 180)
+	if len(online) != 1 || online[0].UID != 7 || online[0].IP != "2001:db8::1" {
+		t.Fatalf("online users = %#v", online)
 	}
 }
 

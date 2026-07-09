@@ -24,10 +24,11 @@ Scope:
 - Receive panel-managed peer IP, peer public key, and preshared key from user sync.
 - Add a `wireguard` core that applies the Linux WireGuard interface through `ip` and `wg`.
 - Report peer traffic deltas from `wg show <iface> transfer`.
+- Report initial peer online state from recent `wg show <iface> dump` handshakes through the existing `/alive` path.
 - Keep the target path documented as `WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas exit NAT`.
 
 Known remaining gaps:
-- Full GOST relay+QUIC route orchestration, WSS compatibility mode, overseas exit NAT, online-state integration, and speed-limit enforcement need real integration evidence.
+- Full GOST relay+QUIC route orchestration, WSS compatibility mode, overseas exit NAT, and speed-limit enforcement need real integration evidence.
 - WSS remains compatibility mode, not the default.
 - Release builds must still come from GitHub Actions only.
 

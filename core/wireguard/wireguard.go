@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/InazumaV/V2bX/api/panel"
 	"github.com/InazumaV/V2bX/conf"
@@ -19,6 +21,7 @@ import (
 )
 
 var _ vCore.Core = (*WireGuard)(nil)
+var _ vCore.OnlineDeviceProvider = (*WireGuard)(nil)
 
 type commandExecutor interface {
 	Run(name string, args ...string) error
@@ -275,6 +278,27 @@ func (w *WireGuard) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTra
 	return trafficSlice, nil
 }
 
+func (w *WireGuard) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {
+	w.mu.Lock()
+	state, ok := w.nodes[tag]
+	if !ok {
+		w.mu.Unlock()
+		return nil, errors.New("the node is not have")
+	}
+	publicKeyToUID := make(map[string]int, len(state.users))
+	for _, user := range state.users {
+		publicKeyToUID[user.WireGuardPublicKey] = user.Id
+	}
+	iface := state.iface
+	w.mu.Unlock()
+
+	out, err := w.executor.Output(w.cfg.WGPath, "show", iface, "dump")
+	if err != nil {
+		return nil, err
+	}
+	return parseDumpOnline(out, publicKeyToUID, time.Now().Unix(), w.cfg.OnlineHandshakeTimeoutSeconds), nil
+}
+
 func (w *WireGuard) Protocols() []string {
 	return []string{"wireguard"}
 }
@@ -424,4 +448,55 @@ func parseTransferOutput(out []byte) map[string]trafficPair {
 		}
 	}
 	return result
+}
+
+func parseDumpOnline(out []byte, publicKeyToUID map[string]int, now, timeoutSeconds int64) []panel.OnlineUser {
+	if timeoutSeconds <= 0 {
+		return nil
+	}
+	online := make([]panel.OnlineUser, 0)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 8 {
+			continue
+		}
+		uid := publicKeyToUID[fields[0]]
+		if uid == 0 {
+			continue
+		}
+		ip := endpointIP(fields[2])
+		if ip == "" {
+			continue
+		}
+		latestHandshake, err := strconv.ParseInt(fields[4], 10, 64)
+		if err != nil || latestHandshake <= 0 {
+			continue
+		}
+		if now >= latestHandshake && now-latestHandshake > timeoutSeconds {
+			continue
+		}
+		online = append(online, panel.OnlineUser{UID: uid, IP: ip})
+	}
+	return online
+}
+
+func endpointIP(endpoint string) string {
+	endpoint = strings.TrimSpace(endpoint)
+	if endpoint == "" || endpoint == "(none)" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(endpoint)
+	if err == nil {
+		return strings.Trim(host, "[]")
+	}
+	if strings.HasPrefix(endpoint, "[") {
+		if end := strings.Index(endpoint, "]"); end > 1 {
+			return endpoint[1:end]
+		}
+	}
+	if strings.Count(endpoint, ":") == 1 {
+		host, _, _ = strings.Cut(endpoint, ":")
+		return host
+	}
+	return strings.Trim(endpoint, "[]")
 }

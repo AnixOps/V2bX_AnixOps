@@ -58,7 +58,7 @@
 
 ## WireGuard 协议
 
-WireGuard 是 P0 双机入口/出口方案的用户接入协议。当前 V2bX 支持从面板接收 WireGuard 节点配置和用户 peer 字段，在国内入口节点上通过系统 `ip`、`wg` 命令应用 WireGuard 接口与 peer，并用 `wg show <iface> transfer` 解析 peer 流量增量。
+WireGuard 是 P0 双机入口/出口方案的用户接入协议。当前 V2bX 支持从面板接收 WireGuard 节点配置和用户 peer 字段，在国内入口节点上通过系统 `ip`、`wg` 命令应用 WireGuard 接口与 peer，用 `wg show <iface> transfer` 解析 peer 流量增量，并用最近的 `wg show <iface> dump` 握手记录上报 peer 在线状态。
 
 目标路径保持为：
 
@@ -110,6 +110,21 @@ WireGuard 节点的 `/api/v2/server/UniProxy/user` 响应必须为每个用户�
 - V2bX 配置中需要启用 `wireguard` core。
 - 入口机需要安装 WireGuard 内核支持、`wireguard-tools`、`iproute2`。
 - GOST 双机 relay 仍需要实机验证；WSS 是兼容模式，不是默认模式。
+
+### V2bX WireGuard Core 配置
+
+```json
+{
+  "Type": "wireguard",
+  "RuntimeDir": "/etc/V2bX/wireguard",
+  "WGPath": "wg",
+  "IPPath": "ip",
+  "GostPath": "gost",
+  "OnlineHandshakeTimeoutSeconds": 180
+}
+```
+
+`OnlineHandshakeTimeoutSeconds` 控制 peer 在线状态判定窗口。默认 180 秒；设为 `0` 或负数时禁用 WireGuard peer 在线上报。在线状态只表示入口节点最近收到该 peer 握手，不代表完整 `GOST relay+QUIC -> overseas exit NAT` 链路已经可用。
 
 ---
 

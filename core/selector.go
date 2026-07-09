@@ -133,6 +133,18 @@ func (s *Selector) GetUserTrafficSlice(tag string, reset bool) ([]panel.UserTraf
 	return t.(Core).GetUserTrafficSlice(tag, reset)
 }
 
+func (s *Selector) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {
+	t, e := s.nodes.Load(tag)
+	if !e {
+		return nil, errors.New("the node is not have")
+	}
+	provider, ok := t.(OnlineDeviceProvider)
+	if !ok {
+		return nil, nil
+	}
+	return provider.GetOnlineDevice(tag)
+}
+
 func (s *Selector) DelUsers(users []panel.UserInfo, tag string, info *panel.NodeInfo) error {
 	t, e := s.nodes.Load(tag)
 	if !e {

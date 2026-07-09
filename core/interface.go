@@ -22,3 +22,7 @@ type Core interface {
 	Protocols() []string
 	Type() string
 }
+
+type OnlineDeviceProvider interface {
+	GetOnlineDevice(tag string) ([]panel.OnlineUser, error)
+}
