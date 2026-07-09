@@ -36,10 +36,11 @@ jobs:
         # Make CI robust if a go.work exists in the runner environment.
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test -run TestNonExistent ./...
 
-      - name: Set up protoc
-        uses: arduino/setup-protoc@v3
-        with:
-          version: "5.29.2"
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+          protoc --version
 
       - name: Install protoc Go plugins
         run: |
