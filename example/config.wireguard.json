@@ -1,0 +1,35 @@
+{
+  "Log": {
+    "Level": "info",
+    "Output": ""
+  },
+  "Cores": [
+    {
+      "Type": "wireguard",
+      "RuntimeDir": "/etc/V2bX/wireguard",
+      "WGPath": "wg",
+      "IPPath": "ip",
+      "TCPath": "tc",
+      "IPTablesPath": "iptables",
+      "SysctlPath": "sysctl",
+      "GostPath": "gost",
+      "OnlineHandshakeTimeoutSeconds": 180,
+      "GostRestartDelaySeconds": 3
+    }
+  ],
+  "Nodes": [
+    {
+      "Core": "wireguard",
+      "ApiHost": "https://panel.example.com",
+      "Transport": "http",
+      "ApiKey": "replace-with-node-api-key",
+      "NodeID": 1,
+      "NodeType": "wireguard",
+      "Timeout": 30,
+      "ListenIP": "0.0.0.0",
+      "SendIP": "0.0.0.0",
+      "DeviceOnlineMinTraffic": 200,
+      "ReportMinTraffic": 0
+    }
+  ]
+}

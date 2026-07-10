@@ -59,6 +59,11 @@ type HeartbeatResponse struct {
 	Message string `json:"message"`
 }
 
+type RuntimeHealthRequest struct {
+	Healthy bool   `json:"healthy"`
+	Error   string `json:"error,omitempty"`
+}
+
 // ========== API 方法 ==========
 
 // Register 节点注册
@@ -119,6 +124,29 @@ func (c *Client) Heartbeat(req *HeartbeatRequest) error {
 		return fmt.Errorf("heartbeat failed: %s (status: %d)", result.Message, resp.StatusCode())
 	}
 
+	return nil
+}
+
+func (c *Client) reportRuntimeHealth(req *RuntimeHealthRequest) error {
+	if c.APIKey == "" {
+		return fmt.Errorf("api key not set")
+	}
+
+	var result HeartbeatResponse
+	r := c.client.R().
+		SetHeader("X-API-Key", c.APIKey).
+		SetBody(req).
+		SetResult(&result)
+	if c.EnableSign && c.Secret != "" {
+		c.addSignatureToRequest(r, "POST", "/api/v2/node/runtime-health", req)
+	}
+	resp, err := r.Post("/api/v2/node/runtime-health")
+	if err != nil {
+		return fmt.Errorf("send runtime health: %w", err)
+	}
+	if resp.StatusCode() != http.StatusOK {
+		return fmt.Errorf("runtime health failed: %s (status: %d)", result.Message, resp.StatusCode())
+	}
 	return nil
 }
 

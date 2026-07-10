@@ -58,7 +58,7 @@
 
 ## WireGuard 协议
 
-WireGuard 是 P0 双机入口/出口方案的用户接入协议。当前 V2bX 支持从面板接收 WireGuard 节点配置和用户 peer 字段，在国内入口节点上通过系统 `ip`、`wg` 命令应用 WireGuard 接口与 peer，用 `wg show <iface> transfer` 解析 peer 流量增量，并用最近的 `wg show <iface> dump` 握手记录上报 peer 在线状态。V2bX 还提供首版 GOST TUN relay runtime 切片：入口节点启动 GOST TUN over `relay+quic`/`relay+wss` 并为 WireGuard CIDR 安装源地址策略路由；出口节点启动匹配的 GOST TUN listener 并可为 WireGuard CIDR 应用 iptables NAT。
+WireGuard 是 P0 双机入口/出口方案的用户接入协议。当前 V2bX 支持从面板接收 WireGuard 节点配置和用户 peer 字段，在国内入口节点上通过系统 `ip`、`wg` 命令应用 WireGuard 接口与 peer，用 `wg show <iface> transfer` 解析 peer 流量增量，并用最近的 `wg show <iface> dump` 握手记录上报 peer 在线状态。V2bX 还提供首版 GOST TUN relay runtime 切片：入口节点启动 GOST TUN over `relay+quic`/`relay+wss` 并为 IPv4 WireGuard CIDR 安装源地址策略路由；出口节点启动匹配的 GOST TUN listener 并可为 IPv4 WireGuard CIDR 应用 iptables NAT。首版 relay 运行时明确拒绝 IPv6 peer CIDR、relay TUN CIDR 和 IPv6 AllowedIPs，避免未实现 `ip -6`/IPv6 NAT 时形成半可用配置。
 
 目标路径保持为：
 
@@ -81,13 +81,19 @@ WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas ex
   "server_public_key": "server-public-key",
   "mtu": 1280,
   "dns": ["1.1.1.1", "8.8.8.8"],
-  "allowed_ips": ["0.0.0.0/0", "::/0"],
+  "allowed_ips": ["0.0.0.0/0"],
   "tunnel_type": "quic",
   "relay": {
     "backend": "gost",
     "mode": "relay+quic",
     "role": "entry",
     "wss_compat": false,
+	"wss_path": "/ws",
+	"wss_secure": true,
+	"wss_server_name": "exit.example.com",
+	"wss_ca_file": "/etc/V2bX/certs/relay-ca.pem",
+	"wss_cert_file": "",
+	"wss_key_file": "",
     "exit_nat": true,
     "entry_stats": true,
     "server": "exit.example.com",
@@ -108,15 +114,27 @@ WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas ex
 gost -L tun://:0/:<tun_port>?net=<entry_tun_address>&name=<tun_name>&mtu=<mtu> -F relay+quic://<server>:<server_port>
 ```
 
-Then it enables IPv4 forwarding and installs source-based routing for the WireGuard `cidr` into a dedicated routing table. `tunnel_type=wss` or `relay.wss_compat=true` switches only the entry-to-exit tunnel to `relay+wss`; WSS is compatibility mode, not the default.
+Then it enables IPv4 forwarding, installs source-based routing for the WireGuard `cidr` into a dedicated routing table, and adds WireGuard-to-TUN plus stateful TUN-to-WireGuard FORWARD rules. `tunnel_type=wss` or `relay.wss_compat=true` switches only the entry-to-exit tunnel to `relay+wss`; WSS is compatibility mode, not the default.
 
-`relay.role=exit` expects `relay.tun_port`, `relay.entry_tun_address`, and `relay.exit_tun_address`. It starts:
+`relay.backend` defaults to `gost`. The panel always emits that normalized value; V2bX also treats a legacy payload that contains relay settings but omits `relay.backend` as GOST. An explicitly non-GOST backend is rejected before node startup rather than leaving an interface without its relay path.
+
+For WSS, the entry must use `wss_secure=true` and set
+`wss_server_name`; `wss_ca_file` is optional for a public CA and required when
+the exit uses a private CA. V2bX encodes these values as GOST TLS dialer
+parameters, so certificate verification is never silently disabled.
+
+`relay.role=exit` expects `cidr`, `relay.server_port`, `relay.tun_port`, `relay.entry_tun_address`, and `relay.exit_tun_address`. It is a pure relay/NAT role: `server_address`, `server_private_key`, `server_public_key`, and `public_key` must be empty and are rejected if present. The panel returns an empty user list for this role. V2bX does not create a local WireGuard interface, install user peers, sample peer traffic, or report peer online state on the exit node. It starts:
 
 ```text
 gost -L tun://:<tun_port>?net=<exit_tun_address>&name=<tun_name>&mtu=<mtu>&route=<wireguard_cidr>&gw=<entry_tun_ip> -L relay+quic://:<server_port>?bind=true
 ```
 
-When `relay.exit_nat=true`, V2bX applies iptables MASQUERADE for the WireGuard CIDR and a FORWARD allow rule for the GOST TUN interface. `relay.outbound_iface` can narrow the FORWARD rule to the public egress interface.
+V2bX always applies a TUN-to-egress FORWARD allow rule and an `ESTABLISHED,RELATED` return rule back to the TUN, so the relay works with a default-DROP FORWARD policy. When `relay.exit_nat=true`, it additionally applies iptables MASQUERADE for the WireGuard CIDR; set it to `false` only when upstream routing already knows the WireGuard CIDR. `relay.outbound_iface` narrows both forwarding rules and the optional NAT rule to the public egress interface.
+
+For WSS, the exit must set matching `wss_path`, `wss_cert_file`, and
+`wss_key_file`. V2bX passes the certificate and private-key paths only to the
+exit GOST listener; the entry receives only its CA path and expected server
+name. Keep the two nodes' WSS paths identical.
 
 ### 用户列表扩展字段
 
@@ -133,9 +151,10 @@ WireGuard 节点的 `/api/v2/server/UniProxy/user` 响应必须为每个用户�
 ### 运行前提
 
 - V2bX 配置中需要启用 `wireguard` core。
-- 入口机需要安装 WireGuard 内核支持、`wireguard-tools`、`iproute2`、GOST。
+- 节点配置显式设置 `Core: "wireguard"` 时，V2bX 会自动把首次配置拉取限定为 `node_type=wireguard`；`NodeType` 仍可显式设置，且优先于该推断。
+- 入口机需要安装 WireGuard 内核支持、`wireguard-tools`、`iproute2`、`iptables`、GOST。
 - 出口机需要安装 GOST、`iproute2`、`iptables`，并允许内核转发。
-- GOST 双机 relay 仍需要实机和 GitHub Actions relay-path 验证；WSS 是兼容模式，不是默认模式。
+- GitHub Actions 在有效 RC/tag 时会分别执行 `relay+quic` 与带临时 CA/SNI 验证的 `relay+wss` 特权网络命名空间验收：真实 WireGuard 客户端流量必须经过 V2bX entry、GOST、V2bX exit NAT 和 HTTP 目标；首个成功 artifact 与真实跨地域双机证据仍待记录。WSS 是兼容模式，不是默认模式。
 
 ### V2bX WireGuard Core 配置
 
@@ -145,14 +164,16 @@ WireGuard 节点的 `/api/v2/server/UniProxy/user` 响应必须为每个用户�
   "RuntimeDir": "/etc/V2bX/wireguard",
   "WGPath": "wg",
   "IPPath": "ip",
+  "TCPath": "tc",
   "IPTablesPath": "iptables",
   "SysctlPath": "sysctl",
   "GostPath": "gost",
-  "OnlineHandshakeTimeoutSeconds": 180
+  "OnlineHandshakeTimeoutSeconds": 180,
+  "GostRestartDelaySeconds": 3
 }
 ```
 
-`OnlineHandshakeTimeoutSeconds` 控制 peer 在线状态判定窗口。默认 180 秒；设为 `0` 或负数时禁用 WireGuard peer 在线上报。在线状态只表示入口节点最近收到该 peer 握手，不代表完整 `GOST relay+QUIC -> overseas exit NAT` 链路已经可用。
+`OnlineHandshakeTimeoutSeconds` 控制 peer 在线状态判定窗口。默认 180 秒；设为 `0` 或负数时禁用 WireGuard peer 在线上报。`GostRestartDelaySeconds` 控制 GOST 进程退出后的重启间隔，默认 3 秒。节点会回收旧的 TUN/路由/NAT 状态、上报 runtime health，并持续重试直到恢复或节点被删除。在线状态只表示入口节点最近收到该 peer 握手，不代表完整 `GOST relay+QUIC -> overseas exit NAT` 链路已经可用。
 
 ---
 

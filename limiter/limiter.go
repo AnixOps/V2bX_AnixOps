@@ -43,7 +43,7 @@ type UserLimitInfo struct {
 
 func AddLimiter(tag string, l *conf.LimitConfig, users []panel.UserInfo, aliveList map[int]int) *Limiter {
 	info := &Limiter{
-		SpeedLimit:    l.SpeedLimit,
+		SpeedLimit:    mbpsToBytesPerSecond(l.SpeedLimit),
 		UserOnlineIP:  new(sync.Map),
 		UserLimitInfo: new(sync.Map),
 		SpeedLimiter:  new(sync.Map),
@@ -115,7 +115,7 @@ func (l *Limiter) UpdateUser(tag string, added []panel.UserInfo, deleted []panel
 func (l *Limiter) UpdateDynamicSpeedLimit(tag, uuid string, limit int, expire time.Time) error {
 	if v, ok := l.UserLimitInfo.Load(format.UserTag(tag, uuid)); ok {
 		info := v.(*UserLimitInfo)
-		info.DynamicSpeedLimit = limit
+		info.DynamicSpeedLimit = mbpsToBytesPerSecond(limit)
 		info.ExpireTime = expire.Unix()
 	} else {
 		return errors.New("not found")
@@ -185,7 +185,7 @@ func (l *Limiter) CheckLimit(taguuid string, ip string, isTcp bool, noSSUDP bool
 		}
 	}
 
-	limit := int64(determineSpeedLimit(nodeLimit, userLimit)) * 1000000 / 8 // If you need the Speed limit
+	limit := int64(determineSpeedLimit(nodeLimit, userLimit)) // effective bytes/s
 	if limit > 0 {
 		Bucket = ratelimit.NewBucketWithQuantum(time.Second, limit, limit) // Byte/s
 		if v, ok := l.SpeedLimiter.LoadOrStore(taguuid, Bucket); ok {

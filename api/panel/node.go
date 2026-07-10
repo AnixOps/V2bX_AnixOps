@@ -172,6 +172,12 @@ type WireGuardRelay struct {
 	OutboundIface   string `json:"outbound_iface"`
 	RoutingTable    int    `json:"routing_table"`
 	RoutingPriority int    `json:"routing_priority"`
+	WSSPath         string `json:"wss_path"`
+	WSSSecure       bool   `json:"wss_secure"`
+	WSSServerName   string `json:"wss_server_name"`
+	WSSCAFile       string `json:"wss_ca_file"`
+	WSSCertFile     string `json:"wss_cert_file"`
+	WSSKeyFile      string `json:"wss_key_file"`
 }
 
 type RawDNS struct {

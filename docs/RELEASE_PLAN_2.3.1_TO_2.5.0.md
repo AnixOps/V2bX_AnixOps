@@ -29,7 +29,11 @@ Scope:
 - Keep the target path documented as `WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas exit NAT`.
 
 Known remaining gaps:
-- Real-machine GOST relay+QUIC route orchestration, WSS compatibility mode, overseas exit NAT, and speed-limit enforcement need integration evidence.
+- A release-gated GitHub Actions network-namespace job now exercises the QUIC
+  route with real WireGuard, GOST, and NAT processes, but its first successful
+  artifact, real-machine GOST relay+QUIC route orchestration, WSS compatibility
+  mode, overseas exit NAT, and speed-limit behavior still need integration
+  evidence.
 - WSS remains compatibility mode, not the default.
 - Release builds must still come from GitHub Actions only.
 
@@ -136,16 +140,17 @@ Required before `v2.5.0`:
 
 Run before every tag:
 
-```bash
-bash scripts/check_release_build_policy.sh
-git ls-files '*.go' | xargs gofmt -l
-GOEXPERIMENT=jsonv2 GOWORK=off go test ./...
-git status --short
-git diff --check
-```
+- Push the candidate commit and wait for GitHub Actions to complete the full Go
+  suite, focused WireGuard contract checks, formatting checks, and release
+  packaging checks.
+- Keep local verification limited to `git status --short`, `git diff --check`,
+  and removal of stale build artifacts. Do not build or test release candidates
+  from the local checkout.
 
 For release candidates:
 
+- Use a strict tag such as `v2.5.0-rc.1`; arbitrary `v*` tags do not publish a
+  release.
 - Trigger the GitHub Actions release workflow from the candidate commit or tag.
 - Verify the uploaded `V2bX-linux-64.zip` and `V2bX-linux-arm64-v8a.zip` artifacts.
 - Do not build release candidates from a local checkout.

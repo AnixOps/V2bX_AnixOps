@@ -206,6 +206,11 @@ func (o *Options) UnmarshalJSON(data []byte) error {
 	case "hysteria2":
 		o.RawOptions = data
 		return nil
+	case "wireguard":
+		// WireGuard has no nested per-node options, but keeping the explicit
+		// core selection is required when a process hosts multiple core types.
+		o.RawOptions = data
+		return nil
 	default:
 		o.Core = ""
 		o.RawOptions = data

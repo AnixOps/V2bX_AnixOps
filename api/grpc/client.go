@@ -2,6 +2,7 @@ package grpc
 
 import (
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/keepalive"
 	"google.golang.org/grpc/metadata"
+	"google.golang.org/protobuf/proto"
 )
 
 // GRPCClientConfig defines gRPC dial and auth settings.
@@ -60,6 +62,10 @@ type GRPCClient struct {
 
 	onConfigUpdate func(*pb.NodeConfigResponse)
 	onUserUpdate   func(*pb.StatusResponse)
+
+	configMu          sync.Mutex
+	nodeConfigHash    [sha256.Size]byte
+	hasNodeConfigHash bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -220,6 +226,14 @@ func parseWireGuardRelay(value string) panel.WireGuardRelay {
 	return relay
 }
 
+func nodeConfigFingerprint(resp *pb.NodeConfigResponse) ([sha256.Size]byte, error) {
+	encoded, err := proto.MarshalOptions{Deterministic: true}.Marshal(resp)
+	if err != nil {
+		return [sha256.Size]byte{}, fmt.Errorf("marshal node config: %w", err)
+	}
+	return sha256.Sum256(encoded), nil
+}
+
 func firstExtraValue(extra map[string]string, keys ...string) string {
 	for _, key := range keys {
 		if value := extra[key]; value != "" {
@@ -282,7 +296,7 @@ func (c *GRPCClient) Register(authKey, name, host string, port int32, serverVers
 		Port:               port,
 		ServerVersion:      serverVersion,
 		ServerOs:           serverOS,
-		SupportedProtocols: []string{"vmess", "vless", "trojan", "shadowsocks", "hysteria", "hysteria2", "tuic", "anytls"},
+		SupportedProtocols: []string{"vmess", "vless", "trojan", "shadowsocks", "hysteria", "hysteria2", "tuic", "anytls", "wireguard"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("grpc register: %w", err)
@@ -297,6 +311,9 @@ func (c *GRPCClient) Register(authKey, name, host string, port int32, serverVers
 
 // GetNodeConfig pulls node configuration from panel over gRPC.
 func (c *GRPCClient) GetNodeConfig() (*panel.NodeInfo, error) {
+	c.configMu.Lock()
+	defer c.configMu.Unlock()
+
 	ctx, cancel := context.WithTimeout(c.ctx, 10*time.Second)
 	defer cancel()
 
@@ -306,6 +323,10 @@ func (c *GRPCClient) GetNodeConfig() (*panel.NodeInfo, error) {
 	}
 	if resp == nil {
 		return nil, fmt.Errorf("grpc get config: nil response")
+	}
+	fingerprint, err := nodeConfigFingerprint(resp)
+	if err != nil {
+		return nil, fmt.Errorf("grpc get config fingerprint: %w", err)
 	}
 
 	nodeType := normalizeNodeType(resp.GetType(), resp.GetNodeType())
@@ -426,6 +447,12 @@ func (c *GRPCClient) GetNodeConfig() (*panel.NodeInfo, error) {
 		node.Security = panel.None
 	}
 
+	if c.hasNodeConfigHash && c.nodeConfigHash == fingerprint {
+		return nil, nil
+	}
+	c.nodeConfigHash = fingerprint
+	c.hasNodeConfigHash = true
+
 	return node, nil
 }
 
@@ -538,6 +565,30 @@ func (c *GRPCClient) ReportNodeLogs(entries []panel.NodeLogEntry) error {
 		return fmt.Errorf("grpc report node logs: %w", err)
 	}
 	return nil
+}
+
+// ReportNodeRuntimeHealth uses the existing node-log RPC so REST and gRPC
+// transports expose the same runtime-health signal without a proto breaking
+// change to the legacy heartbeat message.
+func (c *GRPCClient) ReportNodeRuntimeHealth(healthy bool, message string) error {
+	fields, err := json.Marshal(map[string]any{
+		"runtime_healthy": healthy,
+		"runtime_error":   message,
+	})
+	if err != nil {
+		return fmt.Errorf("encode runtime health: %w", err)
+	}
+	level := "info"
+	if !healthy {
+		level = "error"
+	}
+	return c.ReportNodeLogs([]panel.NodeLogEntry{{
+		Level:      level,
+		Source:     "wireguard",
+		Message:    "wireguard runtime health updated",
+		Timestamp:  time.Now(),
+		FieldsJSON: string(fields),
+	}})
 }
 
 // StartStreams starts optional bidirectional streams.

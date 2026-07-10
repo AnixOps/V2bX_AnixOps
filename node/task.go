@@ -27,6 +27,7 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 	_ = c.nodeInfoMonitorPeriodic.Start(false)
 	log.WithField("tag", c.tag).Info("Start report node status")
 	_ = c.userReportPeriodic.Start(false)
+	c.reportRuntimeHealth()
 	if node.Security == panel.Tls {
 		switch c.CertConfig.CertMode {
 		case "none", "", "file", "self":
@@ -40,12 +41,17 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 			_ = c.renewCertPeriodic.Start(true)
 		}
 	}
-	if c.LimitConfig.EnableDynamicSpeedLimit {
+	if c.LimitConfig.EnableDynamicSpeedLimit && c.LimitConfig.DynamicSpeedLimitConfig != nil {
 		c.traffic = make(map[string]int64)
+		periodic := c.LimitConfig.DynamicSpeedLimitConfig.Periodic
+		if periodic <= 0 {
+			periodic = 60
+		}
 		c.dynamicSpeedLimitPeriodic = &task.Task{
-			Interval: time.Duration(c.LimitConfig.DynamicSpeedLimitConfig.Periodic) * time.Second,
+			Interval: time.Duration(periodic) * time.Second,
 			Execute:  c.SpeedChecker,
 		}
+		_ = c.dynamicSpeedLimitPeriodic.Start(false)
 		log.Printf("[NodeID: %d] Start dynamic speed limit", c.apiClient.GetNodeID())
 	}
 }
@@ -101,9 +107,10 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 
 		// Update limiter
 		if len(c.Options.Name) == 0 {
+			oldTag := c.tag
 			c.tag = c.buildNodeTag(newN)
-			// Remove Old limiter
-			limiter.DeleteLimiter(c.tag)
+			// Remove the limiter under the old tag before replacing the tag.
+			limiter.DeleteLimiter(oldTag)
 			// Add new Limiter
 			l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, newA)
 			c.limiter = l
@@ -163,7 +170,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 		}
 		if c.userReportPeriodic.Interval != newN.PushInterval &&
 			newN.PushInterval != 0 {
-			c.userReportPeriodic.Interval = newN.PullInterval
+			c.userReportPeriodic.Interval = newN.PushInterval
 			c.userReportPeriodic.Close()
 			_ = c.userReportPeriodic.Start(false)
 		}
@@ -186,8 +193,9 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			"err": err,
 		}).Warn("Report node status failed")
 	}
+	c.reportRuntimeHealth()
 	// node no changed, check users
-	if len(newU) == 0 {
+	if newU == nil {
 		return nil
 	}
 	deleted, added := compareUserList(c.userList, newU)
@@ -242,15 +250,40 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 	return nil
 }
 
+func (c *Controller) reportRuntimeHealth() {
+	provider, ok := c.server.(vCore.RuntimeHealthProvider)
+	if !ok {
+		return
+	}
+	reporter, ok := c.apiClient.(apiclient.RuntimeHealthReporter)
+	if !ok {
+		return
+	}
+	healthy, message := provider.RuntimeHealth(c.tag)
+	if err := reporter.ReportNodeRuntimeHealth(healthy, message); err != nil {
+		log.WithFields(log.Fields{
+			"tag":     c.tag,
+			"healthy": healthy,
+			"err":     err,
+		}).Warn("Report runtime health failed")
+	}
+}
+
 func (c *Controller) SpeedChecker() error {
+	if c.traffic == nil || c.LimitConfig.DynamicSpeedLimitConfig == nil {
+		return nil
+	}
 	for u, t := range c.traffic {
 		if t >= c.LimitConfig.DynamicSpeedLimitConfig.Traffic {
 			err := c.limiter.UpdateDynamicSpeedLimit(c.tag, u,
 				c.LimitConfig.DynamicSpeedLimitConfig.SpeedLimit,
 				time.Now().Add(time.Duration(c.LimitConfig.DynamicSpeedLimitConfig.ExpireTime)*time.Minute))
-			log.WithField("err", err).Error("Update dynamic speed limit failed")
+			if err != nil {
+				log.WithField("err", err).Error("Update dynamic speed limit failed")
+			}
 			delete(c.traffic, u)
 		}
 	}
+	c.syncCoreUserRateLimits()
 	return nil
 }

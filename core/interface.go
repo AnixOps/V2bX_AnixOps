@@ -26,3 +26,24 @@ type Core interface {
 type OnlineDeviceProvider interface {
 	GetOnlineDevice(tag string) ([]panel.OnlineUser, error)
 }
+
+// RuntimeHealthProvider exposes process-level health for cores that supervise
+// external runtime components. WireGuard uses it for the GOST relay process.
+type RuntimeHealthProvider interface {
+	RuntimeHealth(tag string) (healthy bool, message string)
+}
+
+// RateLimitUpdater is implemented by cores whose runtime can enforce a
+// per-user rate outside the protocol parser. WireGuard uses Linux tc rules
+// keyed by each peer address; the existing proxy cores keep their own limiter
+// hooks and do not need to implement this optional interface.
+type RateLimitUpdater interface {
+	UpdateUserRateLimit(tag, uuid string, speedLimit int) error
+}
+
+// TrafficRollbacker lets a core restore a traffic cursor when the panel
+// rejected an otherwise successfully sampled report. It is optional because
+// existing proxy cores do not expose reversible counters.
+type TrafficRollbacker interface {
+	RollbackUserTrafficSlice(tag string, traffic []panel.UserTraffic) error
+}

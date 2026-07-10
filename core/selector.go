@@ -145,6 +145,30 @@ func (s *Selector) GetOnlineDevice(tag string) ([]panel.OnlineUser, error) {
 	return provider.GetOnlineDevice(tag)
 }
 
+func (s *Selector) UpdateUserRateLimit(tag, uuid string, speedLimit int) error {
+	t, ok := s.nodes.Load(tag)
+	if !ok {
+		return errors.New("the node is not have")
+	}
+	updater, ok := t.(RateLimitUpdater)
+	if !ok {
+		return nil
+	}
+	return updater.UpdateUserRateLimit(tag, uuid, speedLimit)
+}
+
+func (s *Selector) RollbackUserTrafficSlice(tag string, traffic []panel.UserTraffic) error {
+	t, ok := s.nodes.Load(tag)
+	if !ok {
+		return errors.New("the node is not have")
+	}
+	rollbacker, ok := t.(TrafficRollbacker)
+	if !ok {
+		return nil
+	}
+	return rollbacker.RollbackUserTrafficSlice(tag, traffic)
+}
+
 func (s *Selector) DelUsers(users []panel.UserInfo, tag string, info *panel.NodeInfo) error {
 	t, e := s.nodes.Load(tag)
 	if !e {

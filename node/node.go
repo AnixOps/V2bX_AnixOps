@@ -41,9 +41,20 @@ func createAPIClient(apiCfg *conf.ApiConfig) (apiclient.NodeAPI, error) {
 	return client, nil
 }
 
+func initialNodeType(nodeType, coreType string) string {
+	if strings.TrimSpace(nodeType) != "" {
+		return nodeType
+	}
+	if strings.EqualFold(strings.TrimSpace(coreType), "wireguard") {
+		return "wireguard"
+	}
+	return ""
+}
+
 func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 	n.controllers = make([]*Controller, len(nodes))
 	for i := range nodes {
+		nodes[i].ApiConfig.NodeType = initialNodeType(nodes[i].ApiConfig.NodeType, nodes[i].Options.Core)
 		client, err := createAPIClient(&nodes[i].ApiConfig)
 		if err != nil {
 			return err

@@ -25,3 +25,10 @@ type NodeAPI interface {
 	SupportsSync() bool
 	Close() error
 }
+
+// RuntimeHealthReporter is implemented by transports that can report a
+// supervised core's process health without changing the legacy heartbeat
+// payload contract.
+type RuntimeHealthReporter interface {
+	ReportNodeRuntimeHealth(healthy bool, message string) error
+}

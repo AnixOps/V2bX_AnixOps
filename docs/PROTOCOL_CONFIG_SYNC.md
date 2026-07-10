@@ -95,7 +95,7 @@ type Selector struct {
 | hysteria2 | hysteria2 | Tls |
 | wireguard | wireguard | None |
 
-WireGuard core 通过面板下发的节点配置和用户 peer 扩展字段应用入口机 WireGuard 接口。它依赖系统 `ip`、`wg` 命令；GOST relay+QUIC 是默认双机目标路径，WSS 仅为兼容模式。当前还会从最近的 `wg show <iface> dump` 握手记录合并 peer 在线状态到现有 `/alive` 上报。V2bX 已有首版 GOST TUN relay runtime 切片：entry 角色启动 GOST TUN over `relay+quic`/`relay+wss` 并为 WireGuard CIDR 安装策略路由，exit 角色启动匹配 listener 并可应用 iptables NAT。真实 GOST/WSS 双机链路、peer 限速和 GitHub Actions relay-path 验证仍需要补齐后才能标记生产完成。
+WireGuard core 通过面板下发的节点配置和用户 peer 扩展字段应用入口机 WireGuard 接口。它依赖系统 `ip`、`wg` 命令；GOST relay+QUIC 是默认双机目标路径，WSS 仅为兼容模式。节点配置显式设置 `Core: "wireguard"` 时，首次配置拉取会自动限定为 `node_type=wireguard`，避免混合协议节点按协议排序取到错误配置；显式 `NodeType` 优先。当前还会从最近的 `wg show <iface> dump` 握手记录合并 peer 在线状态到现有 `/alive` 上报。V2bX 已有首版 GOST TUN relay runtime 切片：entry 角色启动 GOST TUN over `relay+quic`/`relay+wss` 并为 IPv4 WireGuard CIDR 安装策略路由；exit 角色只启动匹配 listener 与 IPv4 iptables NAT，不创建本地 WireGuard interface、不接收任何运行时用户列表或 user peer，也不采集 peer 流量。出口配置不得包含入口机的 `server_address`、`server_private_key`、`server_public_key` 或 `public_key`，面板会拒绝这些字段，V2bX 也不会使用它们。WSS 使用 `wss_path` 匹配两端，入口必须启用 `wss_secure` 并配置 `wss_server_name`，出口必须配置 `wss_cert_file` 与 `wss_key_file`；可选 `wss_ca_file` 支持私有 CA 校验。入口通过 Linux `tc` 应用节点和 peer 限速、收敛动态限速。GOST 进程退出会被监测、清理并自动重启，runtime health 通过 REST 或 gRPC 日志通道回传面板；首版 relay 运行时拒绝 IPv6 peer/relay CIDR 与 IPv6 AllowedIPs；严格 tag/RC 发布会执行 GitHub Actions 网络命名空间 QUIC/WSS 验收，真实 GOST/WSS 跨地域链路仍需要补齐后才能标记生产完成。
 
 ---
 

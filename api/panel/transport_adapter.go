@@ -39,3 +39,9 @@ func (c *Client) ReportNodeStatus(_ *monitor.SystemInfo, _ int, _ int64, _ int64
 // ReportNodeLogs implements api/client.NodeAPI.
 // REST transport does not expose a dedicated node log ingestion endpoint, so this is a no-op.
 func (c *Client) ReportNodeLogs(_ []NodeLogEntry) error { return nil }
+
+// ReportNodeRuntimeHealth sends the supervised runtime state through the
+// node-scoped REST channel.
+func (c *Client) ReportNodeRuntimeHealth(healthy bool, message string) error {
+	return c.reportRuntimeHealth(&RuntimeHealthRequest{Healthy: healthy, Error: message})
+}
