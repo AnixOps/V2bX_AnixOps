@@ -168,7 +168,8 @@ jobs:
 
       - name: Install pinned GOST v3
         run: |
-          go install github.com/go-gost/gost/v3/cmd/gost@v3.2.6
+          # v3.2.6 declares the legacy module path github.com/go-gost/gost.
+          go install github.com/go-gost/gost/cmd/gost@340ba32ef0bebc7293908007cc423dd5f33dd88c
           "$(go env GOPATH)/bin/gost" --version
 
       - name: Build WireGuard relay integration runner
