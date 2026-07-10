@@ -29,11 +29,11 @@ Scope:
 - Keep the target path documented as `WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas exit NAT`.
 
 Known remaining gaps:
-- A release-gated GitHub Actions network-namespace job now exercises the QUIC
-  route with real WireGuard, GOST, and NAT processes, but its first successful
-  artifact, real-machine GOST relay+QUIC route orchestration, WSS compatibility
-  mode, overseas exit NAT, and speed-limit behavior still need integration
-  evidence.
+- `v2.5.0-rc.6` passed release-gated GitHub Actions network-namespace routes
+  for both QUIC and certificate-verified WSS with real WireGuard, GOST, and NAT
+  processes. Real-machine GOST relay orchestration, overseas carrier-path/NAT
+  observation, client import, and production speed-limit evidence still need
+  integration evidence.
 - WSS remains compatibility mode, not the default.
 - Release builds must still come from GitHub Actions only.
 

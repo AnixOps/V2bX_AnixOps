@@ -47,16 +47,22 @@ V2bX_AnixOps/
 
 ## 一键安装（Linux）
 
-快速安装最新版：
+生产环境建议固定版本安装。安装器只下载 GitHub Release 资产，不会 clone 仓库或在节点机编译：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/AnixOps/V2bX_AnixOps/dev_new/scripts/install.sh)
+export VERSION=v2.5.0
+curl -fsSL \
+  "https://raw.githubusercontent.com/AnixOps/V2bX_AnixOps/${VERSION}/scripts/install.sh" \
+  -o /tmp/v2bx-install.sh
+sudo bash /tmp/v2bx-install.sh "${VERSION}"
+rm -f /tmp/v2bx-install.sh
 ```
 
-安装指定版本：
+首次安装后执行配置向导，再启动服务：
 
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/AnixOps/V2bX_AnixOps/dev_new/scripts/install.sh) v0.1.0
+sudo v2bx-anixops initconfig
+sudo v2bx-anixops start
 ```
 
 安装后管理命令：
@@ -126,6 +132,8 @@ UniProxy 鉴权约定：
 
 ## 文档
 
+- [Release 安装指南](./docs/INSTALL.md)
+- [旧版迁移与回滚方案](./docs/MIGRATION.md)
 - [API 文档](./docs/API_DOCUMENTATION.md)
 - [后端 API 问题分析](./docs/BACKEND_API_ISSUES.md)
 - [v2.3.1 到 v2.5.0 发布规划](./docs/RELEASE_PLAN_2.3.1_TO_2.5.0.md)

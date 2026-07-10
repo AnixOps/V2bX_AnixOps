@@ -28,9 +28,9 @@ diagnostics on success or failure.
 
 ## Remaining Evidence Gaps
 
-- No successful privileged GitHub Actions artifact is available until the first
-  RC/tag run completes; the workflow is the required evidence source for the
-  real QUIC route path.
+- `v2.5.0-rc.6` passed the privileged GitHub Actions QUIC and WSS namespace
+  acceptance jobs. The workflow is the required CI evidence source for the
+  real WireGuard/GOST/NAT route path.
 - The GitHub Actions namespace test proves a production-shaped route but does
   not replace geographically separated domestic-entry and overseas-exit
   latency, firewall, or carrier-path evidence.

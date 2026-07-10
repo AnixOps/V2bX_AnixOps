@@ -22,6 +22,11 @@ jobs:
       - name: Run release build policy self-test
         run: bash scripts/check_release_build_policy.sh --self-test
 
+      - name: Validate release installer syntax
+        run: |
+          bash -n scripts/install.sh
+          bash -n scripts/V2bX.sh
+
       - name: Enforce release build policy
         run: bash scripts/check_release_build_policy.sh
 

@@ -10,13 +10,13 @@ plain='\033[0m'
 
 REPO_OWNER="${REPO_OWNER:-AnixOps}"
 REPO_NAME="${REPO_NAME:-V2bX_AnixOps}"
-REPO_BRANCH="${REPO_BRANCH:-dev_new}"
+INSTALL_SCRIPT_REF="${INSTALL_SCRIPT_REF:-${REPO_BRANCH:-dev_new}}"
 
 SERVICE_NAME="V2bX"
 INSTALL_DIR="/usr/local/V2bX"
 BIN_PATH="${INSTALL_DIR}/V2bX"
 CONFIG_DIR="/etc/V2bX"
-INSTALL_SCRIPT_URL="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/scripts/install.sh"
+RAW_BASE="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}"
 CMD_NAME="v2bx-anixops"
 
 info() {
@@ -175,11 +175,16 @@ show_log() {
 
 run_install_script() {
     local version="${1:-}"
+    local script_ref="${INSTALL_SCRIPT_REF}"
     local tmp_file
     local rc=0
+
+    if [[ -n "${version}" ]]; then
+        script_ref="${version}"
+    fi
     tmp_file="$(mktemp)"
 
-    curl -fsSL "${INSTALL_SCRIPT_URL}" -o "${tmp_file}"
+    curl -fsSL "${RAW_BASE}/${script_ref}/scripts/install.sh" -o "${tmp_file}"
     chmod +x "${tmp_file}"
     if [[ -n "${version}" ]]; then
         "${tmp_file}" "${version}" || rc=$?

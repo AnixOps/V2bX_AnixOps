@@ -26,5 +26,5 @@ Current slice:
 Remaining before production-complete:
 
 - Real-machine GOST relay+QUIC routing evidence between domestic entry and overseas exit.
-- One-click WSS compatibility mode through GOST relay+WSS; WSS is compatibility mode, not the default.
+- Real-machine WSS compatibility evidence through GOST relay+WSS; WSS is compatibility mode, not the default.
 - Overseas exit NAT integration evidence and real end-to-end health evidence.
