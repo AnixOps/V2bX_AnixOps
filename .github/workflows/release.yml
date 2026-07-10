@@ -185,7 +185,7 @@ jobs:
         run: |
           sudo env \
             V2BX_WIREGUARD_INTEGRATION_BIN="${GITHUB_WORKSPACE}/wireguard-relay-integration" \
-            GOST_BIN="$(go env GOPATH)/bin/gost" \
+            GOST_BIN="gost" \
             WIREGUARD_RELAY_TUNNEL_TYPE="${{ matrix.tunnel_type }}" \
             WIREGUARD_INTEGRATION_LOG_DIR="${GITHUB_WORKSPACE}/wireguard-integration-artifacts" \
             PATH="${PATH}:$(go env GOPATH)/bin" \
