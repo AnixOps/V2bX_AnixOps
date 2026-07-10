@@ -175,7 +175,7 @@ jobs:
           tar -xzf "$gost_archive" -C "$RUNNER_TEMP"
           chmod 0755 "$RUNNER_TEMP/gost"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
-          "$RUNNER_TEMP/gost" --version
+          "$RUNNER_TEMP/gost" -V
 
       - name: Build WireGuard relay integration runner
         run: |
