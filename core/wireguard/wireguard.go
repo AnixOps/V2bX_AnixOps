@@ -115,6 +115,7 @@ type nodeState struct {
 	gost                  process
 	gostWatchStop         chan struct{}
 	gostRuntime           *gostRuntime
+	networkPolicy         *networkPolicyRuntime
 	runtimeHealthy        bool
 	runtimeError          string
 	cfgPath               string
@@ -148,6 +149,7 @@ type gostRuntime struct {
 	wssCAFile                    string
 	wssCertFile                  string
 	wssKeyFile                   string
+	networkPolicySignature       string
 	natRuleAdded                 bool
 	forwardRuleAdded             bool
 	reverseForwardRuleAdded      bool
@@ -221,6 +223,7 @@ func (w *WireGuard) AddNode(tag string, info *panel.NodeInfo, config *conf.Optio
 		if state.gost != nil {
 			w.cleanupGost(state)
 		}
+		w.cleanupNetworkPolicy(state)
 		_ = os.Remove(state.cfgPath)
 		if !isWireGuardExitNode(state.info) {
 			_ = w.executor.Run(w.cfg.IPPath, "link", "delete", state.iface)
@@ -254,6 +257,7 @@ func (w *WireGuard) DelNode(tag string) error {
 	if state.gost != nil {
 		w.cleanupGost(state)
 	}
+	w.cleanupNetworkPolicy(state)
 	w.cleanupPeerRateLimits(state)
 	_ = os.Remove(state.cfgPath)
 	if isWireGuardExitNode(state.info) {
@@ -581,11 +585,15 @@ func (w *WireGuard) applyGost(state *nodeState) error {
 		if err := w.cleanupGost(state); err != nil {
 			return err
 		}
+		w.cleanupNetworkPolicy(state)
 		state.setRuntimeHealth(true, "")
 		return nil
 	}
 	if backend != "gost" {
 		return fmt.Errorf("wireguard relay backend is not supported: %q", n.Relay.Backend)
+	}
+	if err := w.applyNetworkPolicy(state); err != nil {
+		return err
 	}
 
 	role := wireGuardRelayRole(n)
@@ -606,27 +614,28 @@ func (w *WireGuard) applyGost(state *nodeState) error {
 		return errors.New("wireguard cidr is required for gost relay routing")
 	}
 	runtime := &gostRuntime{
-		role:            role,
-		mode:            mode,
-		server:          strings.TrimSpace(n.Relay.Server),
-		serverPort:      n.Relay.ServerPort,
-		tunPort:         tunPort,
-		tunName:         tunName,
-		tunAddress:      relayTunAddress(n, role),
-		entryTunIP:      relayTunIP(n.Relay.EntryTunAddress),
-		wireGuardIface:  state.iface,
-		mtu:             wireGuardMTU(n),
-		sourceCIDR:      sourceCIDR,
-		routingTable:    relayRoutingTable(state.tag, n.Relay.RoutingTable),
-		routingPriority: relayRoutingPriority(state.tag, n.Relay.RoutingPriority),
-		exitNAT:         n.Relay.ExitNAT,
-		outboundIface:   strings.TrimSpace(n.Relay.OutboundIface),
-		wssPath:         wireGuardWSSPath(n),
-		wssSecure:       n.Relay.WSSSecure,
-		wssServerName:   strings.TrimSpace(n.Relay.WSSServerName),
-		wssCAFile:       strings.TrimSpace(n.Relay.WSSCAFile),
-		wssCertFile:     strings.TrimSpace(n.Relay.WSSCertFile),
-		wssKeyFile:      strings.TrimSpace(n.Relay.WSSKeyFile),
+		role:                   role,
+		mode:                   mode,
+		server:                 strings.TrimSpace(n.Relay.Server),
+		serverPort:             n.Relay.ServerPort,
+		tunPort:                tunPort,
+		tunName:                tunName,
+		tunAddress:             relayTunAddress(n, role),
+		entryTunIP:             relayTunIP(n.Relay.EntryTunAddress),
+		wireGuardIface:         state.iface,
+		mtu:                    wireGuardMTU(n),
+		sourceCIDR:             sourceCIDR,
+		routingTable:           relayRoutingTable(state.tag, n.Relay.RoutingTable),
+		routingPriority:        relayRoutingPriority(state.tag, n.Relay.RoutingPriority),
+		exitNAT:                n.Relay.ExitNAT,
+		outboundIface:          strings.TrimSpace(n.Relay.OutboundIface),
+		wssPath:                wireGuardWSSPath(n),
+		wssSecure:              n.Relay.WSSSecure,
+		wssServerName:          strings.TrimSpace(n.Relay.WSSServerName),
+		wssCAFile:              strings.TrimSpace(n.Relay.WSSCAFile),
+		wssCertFile:            strings.TrimSpace(n.Relay.WSSCertFile),
+		wssKeyFile:             strings.TrimSpace(n.Relay.WSSKeyFile),
+		networkPolicySignature: networkPolicySignature(n.Relay.NetworkPolicy),
 	}
 	if state.gost != nil && sameGostRuntime(state.gostRuntime, runtime) {
 		state.setRuntimeHealth(true, "")
@@ -698,7 +707,8 @@ func sameGostRuntime(current, desired *gostRuntime) bool {
 		current.wssServerName == desired.wssServerName &&
 		current.wssCAFile == desired.wssCAFile &&
 		current.wssCertFile == desired.wssCertFile &&
-		current.wssKeyFile == desired.wssKeyFile
+		current.wssKeyFile == desired.wssKeyFile &&
+		current.networkPolicySignature == desired.networkPolicySignature
 }
 
 func (w *WireGuard) watchGostProcess(state *nodeState, proc process) {
@@ -1146,6 +1156,9 @@ func validateWireGuardNode(info *panel.NodeInfo) error {
 	}
 	if backend == "gost" {
 		if err := validateWireGuardGostRuntimeSettings(n); err != nil {
+			return err
+		}
+		if err := validateNetworkPolicyConfig(n); err != nil {
 			return err
 		}
 		return validateWireGuardWSSRelay(n, "entry")

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -45,6 +46,26 @@ type options struct {
 	entryTunAddress   string
 	exitTunAddress    string
 	outboundInterface string
+	networkPaths      networkPathFlags
+}
+
+type networkPathFlags []panel.WireGuardNetworkPath
+
+func (paths *networkPathFlags) String() string { return fmt.Sprint([]panel.WireGuardNetworkPath(*paths)) }
+
+func (paths *networkPathFlags) Set(value string) error {
+	parts := strings.Split(value, ",")
+	if len(parts) != 5 {
+		return errors.New("network path must be name,interface,source,gateway,priority")
+	}
+	priority, err := strconv.Atoi(parts[4])
+	if err != nil {
+		return fmt.Errorf("network path priority: %w", err)
+	}
+	*paths = append(*paths, panel.WireGuardNetworkPath{
+		Name: parts[0], Interface: parts[1], Source: parts[2], Gateway: parts[3], Priority: priority,
+	})
+	return nil
 }
 
 func main() {
@@ -74,6 +95,7 @@ func main() {
 	flag.StringVar(&opts.entryTunAddress, "entry-tun-address", "172.31.66.2/24", "entry GOST TUN address")
 	flag.StringVar(&opts.exitTunAddress, "exit-tun-address", "172.31.66.1/24", "exit GOST TUN address")
 	flag.StringVar(&opts.outboundInterface, "outbound-interface", "", "exit public-egress interface for NAT")
+	flag.Var(&opts.networkPaths, "network-path", "entry failover path: name,interface,source,gateway,priority (repeatable)")
 	flag.Parse()
 
 	if err := run(opts); err != nil {
@@ -167,6 +189,16 @@ func buildNode(opts options) *panel.NodeInfo {
 		ServerPort: opts.serverPort,
 		ServerName: opts.relayServer,
 	}
+	networkPolicy := panel.WireGuardNetworkPolicy{}
+	if len(opts.networkPaths) > 0 {
+		networkPolicy = panel.WireGuardNetworkPolicy{
+			Version: 1, Strategy: "failover", Paths: opts.networkPaths,
+			HealthCheck: panel.WireGuardHealthCheck{
+				IntervalSeconds: 1, TimeoutSeconds: 1, FailureThreshold: 1,
+				RecoveryThreshold: 1, FailbackDelaySeconds: 30,
+			},
+		}
+	}
 	return &panel.NodeInfo{
 		Id:       1,
 		Type:     "wireguard",
@@ -198,6 +230,7 @@ func buildNode(opts options) *panel.NodeInfo {
 				EntryTunAddress: opts.entryTunAddress,
 				ExitTunAddress:  opts.exitTunAddress,
 				OutboundIface:   opts.outboundInterface,
+				NetworkPolicy:   networkPolicy,
 			},
 		},
 	}

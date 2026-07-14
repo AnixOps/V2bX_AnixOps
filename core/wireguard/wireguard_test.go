@@ -469,6 +469,58 @@ func TestWireGuard_AddNodeStartsGostEntryAndPolicyRoute(t *testing.T) {
 	}
 }
 
+func TestWireGuardNetworkPolicyAppliesArbitrarySourcePaths(t *testing.T) {
+	exec := &fakeExecutor{failContains: []string{"iptables -C FORWARD"}}
+	core := &WireGuard{
+		cfg: &conf.WireGuardConfig{
+			RuntimeDir: t.TempDir(), WGPath: "wg", IPPath: "ip",
+			IPTablesPath: "iptables", SysctlPath: "sysctl", GostPath: "gost",
+		},
+		executor: exec,
+		nodes:    make(map[string]*nodeState),
+	}
+	node := testNodeInfo()
+	node.WireGuard.TunnelType = "wss"
+	node.WireGuard.Relay = panel.WireGuardRelay{
+		Backend: "gost", Mode: "relay+wss", Role: "entry", WSSCompat: true,
+		WSSSecure: true, WSSServerName: "exit.example.com", WSSPath: "/wireguard",
+		Server: "104.251.233.29", ServerPort: 443,
+		TunPort: 8421, EntryTunAddress: "172.31.66.2/24", TunName: "gtwgpaths",
+		NetworkPolicy: panel.WireGuardNetworkPolicy{
+			Version: 1, Strategy: "failover", ActiveTable: 62000, ActivePriority: 7000,
+			Paths: []panel.WireGuardNetworkPath{
+				{Name: "9929", Interface: "eth0", Source: "10.7.0.112", Gateway: "10.7.0.1", Priority: 20, RoutingTable: 51000, RulePriority: 4100},
+				{Name: "cn2", Interface: "eth1", Source: "10.8.0.112", Gateway: "10.8.0.1", Priority: 10, RoutingTable: 51001, RulePriority: 4101},
+			},
+			HealthCheck: panel.WireGuardHealthCheck{IntervalSeconds: 60, TimeoutSeconds: 1, FailureThreshold: 3, RecoveryThreshold: 2, FailbackDelaySeconds: 300},
+		},
+	}
+
+	if err := core.AddNode("test-paths", node, &conf.Options{}); err != nil {
+		t.Fatalf("AddNode() error = %v", err)
+	}
+	joined := strings.Join(exec.commands, "\n")
+	for _, want := range []string{
+		"ip -4 route replace default via 10.8.0.1 dev eth1 src 10.8.0.112 table 51001",
+		"ip -4 rule add from 10.8.0.112/32 table 51001 priority 4101",
+		"ip -4 route replace default via 10.7.0.1 dev eth0 src 10.7.0.112 table 51000",
+		"ip -4 rule add from 10.7.0.112/32 table 51000 priority 4100",
+		"ip -4 route replace default via 10.8.0.1 dev eth1 src 10.8.0.112 table 62000",
+		"ip -4 rule add to 104.251.233.29/32 table 62000 priority 7000",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("commands missing %q:\n%s", want, joined)
+		}
+	}
+	if err := core.DelNode("test-paths"); err != nil {
+		t.Fatalf("DelNode() error = %v", err)
+	}
+	joined = strings.Join(exec.commands, "\n")
+	if !strings.Contains(joined, "ip -4 route flush table 62000") || !strings.Contains(joined, "ip -4 route flush table 51001") {
+		t.Fatalf("network policy cleanup missing:\n%s", joined)
+	}
+}
+
 func TestWireGuard_AddNodeDefaultsConfiguredRelayBackendToGost(t *testing.T) {
 	exec := &fakeExecutor{}
 	core := &WireGuard{

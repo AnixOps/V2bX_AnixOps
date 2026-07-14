@@ -112,6 +112,15 @@ ip -n wg-entry link set entry-relay up
 ip -n wg-exit addr add 172.16.1.2/24 dev exit-relay
 ip -n wg-exit link set exit-relay up
 
+ip link add entry-backup type veth peer name exit-backup
+ip link set entry-backup netns wg-entry
+ip link set exit-backup netns wg-exit
+ip -n wg-entry addr add 172.16.2.1/24 dev entry-backup
+ip -n wg-entry link set entry-backup up
+ip -n wg-exit addr add 172.16.2.2/24 dev exit-backup
+ip -n wg-exit link set exit-backup up
+ip -n wg-exit addr add 203.0.113.2/32 dev lo
+
 ip link add exit-uplink type veth peer name internet-link
 ip link set exit-uplink netns wg-exit
 ip link set internet-link netns wg-internet
@@ -139,6 +148,8 @@ printf '%s\n' "${PRESHARED_KEY}" >"${PRESHARED_FILE}"
 
 WSS_ENTRY_ARGS=()
 WSS_EXIT_ARGS=()
+NETWORK_POLICY_ARGS=()
+RELAY_SERVER="172.16.1.2"
 if [[ "${TUNNEL_TYPE}" == "wss" ]]; then
   WSS_CERT_FILE="${WORK_DIR}/relay-cert.pem"
   WSS_KEY_FILE="${WORK_DIR}/relay-key.pem"
@@ -157,6 +168,11 @@ if [[ "${TUNNEL_TYPE}" == "wss" ]]; then
     --wss-cert-file "${WSS_CERT_FILE}"
     --wss-key-file "${WSS_KEY_FILE}"
   )
+  RELAY_SERVER="203.0.113.2"
+  NETWORK_POLICY_ARGS=(
+    --network-path primary,entry-relay,172.16.1.1,172.16.1.2,10
+    --network-path backup,entry-backup,172.16.2.1,172.16.2.2,20
+  )
 fi
 
 mkdir -p "${WORK_DIR}/www"
@@ -174,7 +190,7 @@ ip netns exec wg-exit "${BIN}" \
   --runtime-dir "${WORK_DIR}/exit-runtime" \
   --ready-file "${WORK_DIR}/exit.ready" \
   --gost-path "${GOST_BIN}" \
-  --relay-server 172.16.1.2 \
+  --relay-server "${RELAY_SERVER}" \
   --relay-server-port 18443 \
   --tun-port 18421 \
   --tun-name gtwgitexit \
@@ -190,6 +206,7 @@ ip netns exec wg-entry "${BIN}" \
   --role entry \
   --tunnel-type "${TUNNEL_TYPE}" \
   "${WSS_ENTRY_ARGS[@]}" \
+  "${NETWORK_POLICY_ARGS[@]}" \
   --tag integration-entry \
   --runtime-dir "${WORK_DIR}/entry-runtime" \
   --ready-file "${WORK_DIR}/entry.ready" \
@@ -198,7 +215,7 @@ ip netns exec wg-entry "${BIN}" \
   --peer-public-key "${CLIENT_PUBLIC_KEY}" \
   --peer-preshared-key "${PRESHARED_KEY}" \
   --peer-ip 10.66.0.2 \
-  --relay-server 172.16.1.2 \
+  --relay-server "${RELAY_SERVER}" \
   --relay-server-port 18443 \
   --tun-port 18421 \
   --tun-name gtwgitentry \
@@ -245,9 +262,29 @@ if [[ "${response}" != "wireguard-gost-integration-ok" ]]; then
   exit 1
 fi
 
+if [[ "${TUNNEL_TYPE}" == "wss" ]]; then
+  ip -n wg-entry link set entry-relay down
+  response=""
+  failover_deadline=$((SECONDS + 30))
+  until response="$(ip netns exec wg-client curl --fail --silent --show-error --max-time 4 http://198.51.100.2:8080/health 2>/dev/null)"; do
+    if (( SECONDS >= failover_deadline )); then
+      echo "WireGuard relay did not fail over to the backup entry path" >&2
+      exit 1
+    fi
+    sleep 0.5
+  done
+  if [[ "${response}" != "wireguard-gost-integration-ok" ]]; then
+    echo "unexpected failover response: ${response}" >&2
+    exit 1
+  fi
+fi
+
 {
   echo "result=pass"
   echo "path=WireGuard client -> V2bX entry -> GOST relay+${TUNNEL_TYPE} -> V2bX exit NAT -> HTTP target"
+  if [[ "${TUNNEL_TYPE}" == "wss" ]]; then
+    echo "failover=primary entry uplink down -> backup entry uplink pass"
+  fi
   echo
   echo "[client wg]"
   ip netns exec wg-client wg show wgclient

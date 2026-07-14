@@ -156,28 +156,56 @@ type WireGuardNode struct {
 }
 
 type WireGuardRelay struct {
-	Backend         string `json:"backend"`
-	Mode            string `json:"mode"`
-	Role            string `json:"role"`
-	WSSCompat       bool   `json:"wss_compat"`
-	ExitNAT         bool   `json:"exit_nat"`
-	EntryStats      bool   `json:"entry_stats"`
-	Server          string `json:"server"`
-	ServerPort      int    `json:"server_port"`
-	TunName         string `json:"tun_name"`
-	TunPort         int    `json:"tun_port"`
-	TunAddress      string `json:"tun_address"`
-	EntryTunAddress string `json:"entry_tun_address"`
-	ExitTunAddress  string `json:"exit_tun_address"`
-	OutboundIface   string `json:"outbound_iface"`
-	RoutingTable    int    `json:"routing_table"`
-	RoutingPriority int    `json:"routing_priority"`
-	WSSPath         string `json:"wss_path"`
-	WSSSecure       bool   `json:"wss_secure"`
-	WSSServerName   string `json:"wss_server_name"`
-	WSSCAFile       string `json:"wss_ca_file"`
-	WSSCertFile     string `json:"wss_cert_file"`
-	WSSKeyFile      string `json:"wss_key_file"`
+	Backend         string                 `json:"backend"`
+	Mode            string                 `json:"mode"`
+	Role            string                 `json:"role"`
+	WSSCompat       bool                   `json:"wss_compat"`
+	ExitNAT         bool                   `json:"exit_nat"`
+	EntryStats      bool                   `json:"entry_stats"`
+	Server          string                 `json:"server"`
+	ServerPort      int                    `json:"server_port"`
+	TunName         string                 `json:"tun_name"`
+	TunPort         int                    `json:"tun_port"`
+	TunAddress      string                 `json:"tun_address"`
+	EntryTunAddress string                 `json:"entry_tun_address"`
+	ExitTunAddress  string                 `json:"exit_tun_address"`
+	OutboundIface   string                 `json:"outbound_iface"`
+	RoutingTable    int                    `json:"routing_table"`
+	RoutingPriority int                    `json:"routing_priority"`
+	WSSPath         string                 `json:"wss_path"`
+	WSSSecure       bool                   `json:"wss_secure"`
+	WSSServerName   string                 `json:"wss_server_name"`
+	WSSCAFile       string                 `json:"wss_ca_file"`
+	WSSCertFile     string                 `json:"wss_cert_file"`
+	WSSKeyFile      string                 `json:"wss_key_file"`
+	NetworkPolicy   WireGuardNetworkPolicy `json:"network_policy"`
+}
+
+type WireGuardNetworkPolicy struct {
+	Version        int                    `json:"version"`
+	Strategy       string                 `json:"strategy"`
+	Paths          []WireGuardNetworkPath `json:"paths"`
+	HealthCheck    WireGuardHealthCheck   `json:"health_check"`
+	ActiveTable    int                    `json:"active_table"`
+	ActivePriority int                    `json:"active_priority"`
+}
+
+type WireGuardNetworkPath struct {
+	Name         string `json:"name"`
+	Interface    string `json:"interface"`
+	Source       string `json:"source"`
+	Gateway      string `json:"gateway"`
+	Priority     int    `json:"priority"`
+	RoutingTable int    `json:"routing_table"`
+	RulePriority int    `json:"rule_priority"`
+}
+
+type WireGuardHealthCheck struct {
+	IntervalSeconds      int `json:"interval_seconds"`
+	TimeoutSeconds       int `json:"timeout_seconds"`
+	FailureThreshold     int `json:"failure_threshold"`
+	RecoveryThreshold    int `json:"recovery_threshold"`
+	FailbackDelaySeconds int `json:"failback_delay_seconds"`
 }
 
 type RawDNS struct {
