@@ -1494,7 +1494,14 @@ func relayRoutingPriority(tag string, configured int) int {
 	if configured > 0 {
 		return configured
 	}
-	return relayRoutingTable(tag, 0)
+	// Policy rules must run before the kernel's main-table rule at priority
+	// 32766. Routing table IDs may be greater than that, so they cannot also be
+	// used as rule priorities. Keep the generated priority in a separate,
+	// deterministic range that precedes main while leaving room for operator
+	// rules with lower numeric priorities.
+	sum := sha1.Sum([]byte(tag + ":priority"))
+	value := int(sum[0])<<8 | int(sum[1])
+	return 10000 + value%20000
 }
 
 func wireGuardMTU(n *panel.WireGuardNode) int {

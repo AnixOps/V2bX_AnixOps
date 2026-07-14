@@ -507,6 +507,19 @@ func TestWireGuard_AddNodeDefaultsConfiguredRelayBackendToGost(t *testing.T) {
 	}
 }
 
+func TestRelayRoutingPriorityDefaultsBeforeMainTableRule(t *testing.T) {
+	priority := relayRoutingPriority("wireguard-entry", 0)
+	if priority < 10000 || priority >= 30000 {
+		t.Fatalf("default routing priority = %d, want range [10000, 30000)", priority)
+	}
+	if priority >= 32766 {
+		t.Fatalf("default routing priority = %d, must precede main-table priority 32766", priority)
+	}
+	if got := relayRoutingPriority("wireguard-entry", 12010); got != 12010 {
+		t.Fatalf("configured routing priority = %d, want 12010", got)
+	}
+}
+
 func TestWireGuard_AddNodeStartsGostWSSRelay(t *testing.T) {
 	exec := &fakeExecutor{}
 	core := &WireGuard{
