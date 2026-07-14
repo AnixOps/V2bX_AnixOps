@@ -51,7 +51,9 @@ type options struct {
 
 type networkPathFlags []panel.WireGuardNetworkPath
 
-func (paths *networkPathFlags) String() string { return fmt.Sprint([]panel.WireGuardNetworkPath(*paths)) }
+func (paths *networkPathFlags) String() string {
+	return fmt.Sprint([]panel.WireGuardNetworkPath(*paths))
+}
 
 func (paths *networkPathFlags) Set(value string) error {
 	parts := strings.Split(value, ",")
