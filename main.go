@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/InazumaV/V2bX/cmd"
+	"github.com/AnixOps/anix-agent/v3/cmd"
 )
 
 func main() {

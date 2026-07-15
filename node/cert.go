@@ -11,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/InazumaV/V2bX/common/file"
+	"github.com/AnixOps/anix-agent/v3/common/file"
 	log "github.com/sirupsen/logrus"
 )
 

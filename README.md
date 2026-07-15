@@ -1,89 +1,165 @@
-# V2bX AnixOps
+# AnixOps Agent
 
-V2bX AnixOps 是 AnixOps 维护的 V2Board 节点端后端程序（Fork 自 [wyx2685/V2bX](https://github.com/wyx2685/V2bX)）。
+AnixOps Agent 是 AnixOps 维护的多内核代理节点 Agent，用于连接 AnixOps
+Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、用户认证、
+流量统计、在线状态上报和证书管理。
+项目源自 V2bX，迁移期间继续保留必要的旧命令和发行资产兼容入口。
 
-- 节点端仓库: [AnixOps/V2bX_AnixOps](https://github.com/AnixOps/V2bX_AnixOps)
-- 面板端仓库: [AnixOps/v2board_AnixOps](https://github.com/AnixOps/v2board_AnixOps)
-- 上游仓库: [wyx2685/V2bX](https://github.com/wyx2685/V2bX)
+- Agent 仓库: [AnixOps/anix-agent](https://github.com/AnixOps/anix-agent)
+- Control 仓库: [AnixOps/anix-control](https://github.com/AnixOps/anix-control)
+- 上游项目: [wyx2685/V2bX](https://github.com/wyx2685/V2bX)
 
-## 项目概述
+## 主要能力
 
-本项目用于对接 V2Board 面板，支持节点配置同步、用户认证、流量统计、在线设备上报、证书管理等能力。
+- Xray-core、Sing-box、Hysteria2 多内核统一管理
+- VMess、VLESS、Trojan、Shadowsocks、Hysteria2 等协议
+- 用户流量、在线 IP、设备数量与动态限速上报
+- 节点自动注册、签名鉴权与凭证加密存储
+- ACME 证书申请、续期和自定义证书
+- REST、WebSocket、旧版 gRPC API 与 `anix.agent.v1` 双向 gRPC 控制流
+- Linux、Windows 和 macOS 构建
 
-支持多内核：
-- Xray-core
-- Sing-box
-- Hysteria2
+## v3 Alpha 范围
 
-## 主要特性
+`v3.0.0-alpha.1` 提供 Agent-first 的控制流基础，但不是“所有任务已经全部迁移”
+的稳定版。新控制流通过 `AgentControlEnabled` 显式启用，用于握手、能力上报、
+心跳、受限操作、ACK 和观察状态；现有 REST/UniProxy、旧版 gRPC 与 WebSocket
+链路仍作为数据面和回退路径。生产部署应先在少量节点验证 TLS、重连和操作幂等
+性，再逐步扩大范围。
 
-- 多内核统一管理（Xray / Sing-box / Hysteria2）
-- 支持多协议（VMess / VLESS / Trojan / Shadowsocks / Hysteria2 等）
-- 用户流量与在线 IP 统计上报
-- 节点限流、设备数限制、动态限速
-- 自动注册、签名鉴权、凭证加密存储
-- ACME 证书管理与续期
-- 支持 Linux / Windows / macOS
+## 默认路径
 
-## 目录结构
+| 项目 | 默认值 |
+|---|---|
+| CLI / 管理命令 | `anix-agent` |
+| systemd / OpenRC 服务 | `anix-agent` |
+| 程序目录 | `/usr/local/anixops-agent` |
+| 主程序 | `/usr/local/anixops-agent/anix-agent` |
+| 配置目录 | `/etc/anixops/agent` |
+| 主配置 | `/etc/anixops/agent/config.json` |
+| 容器镜像 | `ghcr.io/anixops/anix-agent` |
+
+## Release 安装
+
+生产环境应固定 Release tag。安装器只下载 GitHub Release 资产，不会在节点机
+克隆仓库或执行本地发行构建。
+
+```bash
+export VERSION=v3.0.0-alpha.1
+curl -fsSL \
+  "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
+  -o /tmp/anix-agent-install.sh
+sudo bash /tmp/anix-agent-install.sh "${VERSION}"
+rm -f /tmp/anix-agent-install.sh
+```
+
+首次安装没有可用配置时，安装器不会直接启动服务。先初始化并检查配置：
+
+```bash
+sudo anix-agent initconfig
+sudo anix-agent config
+sudo anix-agent start
+sudo anix-agent status
+sudo anix-agent log
+```
+
+常用管理命令：
 
 ```text
-V2bX_AnixOps/
-├── api/                # 面板 API 客户端
-├── cmd/                # CLI 入口与子命令
-├── conf/               # 配置结构体定义
-├── core/               # 各内核实现（xray/sing/hy2）
-├── node/               # 节点控制器与定时任务
-├── limiter/            # 限流实现
-├── common/             # 通用工具
-├── docs/               # 项目文档
-└── example/            # 配置示例
+anix-agent start|stop|restart|status|log
+anix-agent update [version]
+anix-agent uninstall [--purge]
+anix-agent server -c /etc/anixops/agent/config.json
 ```
 
-## 环境要求
+安装器接受稳定版以及 `alpha`、`beta`、`rc` 预发布 tag，例如
+`v3.0.0`、`v3.0.0-beta.1` 和 `v3.0.0-rc.2`。
 
-- Go 1.25+
-- 构建时需设置 `GOEXPERIMENT=jsonv2`
+## 从 V2bX_AnixOps 升级
 
-## 一键安装（Linux）
+新安装器会自动检测以下旧版安装：
 
-生产环境建议固定版本安装。安装器只下载 GitHub Release 资产，不会 clone 仓库或在节点机编译：
+- `/etc/V2bX`
+- `/usr/local/V2bX`
+- `V2bX.service` 或 `/etc/init.d/V2bX`
+- `V2bX`、`v2bx-anixops` 命令
+
+迁移时只把新目录中缺失的配置复制到 `/etc/anixops/agent`，不会删除或覆盖
+旧配置目录。旧二进制和旧服务定义会在切换前备份；新服务无法启动时，安装器
+会尝试恢复旧二进制和旧服务。迁移成功后，`V2bX`、`v2bx-anixops` 和
+`V2bX.service` 继续作为兼容别名。
+
+完整步骤与回滚说明见
+[AnixOps Agent 迁移指南](docs/ANIX_AGENT_MIGRATION.md)。
+
+## Release 资产兼容
+
+新 Release 的主资产名为：
+
+```text
+anix-agent-linux-64.zip
+anix-agent-linux-arm64-v8a.zip
+```
+
+新 Release 只发布 `anix-agent-*` 主资产。迁移期安装器在找不到新命名资产时，
+会自动回退到同一 tag 的 `V2bX-*` 资产，并接受包内旧 `V2bX` 二进制名，
+最终仍安装到新的程序和配置路径。v3 Release 不承诺继续发布 `V2bX-*`
+资产名；`anix-agent-*` 包内只保留 `V2bX -> anix-agent` 二进制兼容链接。
+
+## 配置与运行
+
+示例位于 `example/`。直接运行 Agent：
 
 ```bash
-export VERSION=v2.5.0
-curl -fsSL \
-  "https://raw.githubusercontent.com/AnixOps/V2bX_AnixOps/${VERSION}/scripts/install.sh" \
-  -o /tmp/v2bx-install.sh
-sudo bash /tmp/v2bx-install.sh "${VERSION}"
-rm -f /tmp/v2bx-install.sh
+anix-agent server -c /etc/anixops/agent/config.json
 ```
 
-首次安装后执行配置向导，再启动服务：
+Windows：
+
+```powershell
+.\anix-agent.exe server -c .\config.json
+```
+
+`Transport` 选择现有配置/用户/流量数据面；`AgentControlEnabled` 独立开启 v3
+双向控制流。以下示例保留 REST 数据面作为回退，同时启用 Agent-first 预览：
+
+```json
+{
+  "ApiHost": "https://panel.example.com",
+  "Transport": "http",
+  "GRPCHost": "panel.example.com:443",
+  "GRPCUseTLS": true,
+  "GRPCServerName": "panel.example.com",
+  "GRPCKeepalive": 30,
+  "AgentControlEnabled": true,
+  "AgentControlAllowInsecure": false,
+  "NodeID": 1,
+  "ApiKey": "your-api-key"
+}
+```
+
+若不显式设置 `AgentControlEnabled: true`，旧配置不会自动建立新控制流。公网或
+非回环地址必须使用 TLS；不要通过放宽明文开关来绕过生产证书配置。
+
+面板 API key 属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
+
+## Docker
 
 ```bash
-sudo v2bx-anixops initconfig
-sudo v2bx-anixops start
+docker run -d \
+  --name anix-agent \
+  --restart unless-stopped \
+  -v /etc/anixops/agent:/etc/anixops/agent \
+  ghcr.io/anixops/anix-agent:latest
 ```
 
-安装后管理命令：
+容器入口默认读取 `/etc/anixops/agent/config.json`，并保留容器内 `V2bX`
+二进制别名供旧编排配置过渡。
 
-```bash
-V2bX start|stop|restart|status|log
-V2bX update [version]
-V2bX uninstall [--purge]
-```
+## 开发构建
 
-## 快速开始
-
-### 1. 准备配置
-
-参考示例配置：`example/config.json`
-
-### 2. 构建与发行
-
-发行构建必须由 GitHub Actions release workflow 生成。生产安装或升级时使用 GitHub Release 附件，不要在节点机或本地 checkout 里执行 `go build` 生成发行产物。
-
-本地构建脚本只保留给开发验证或紧急人工操作，默认拒绝运行实际构建；如确需使用，必须显式 opt-in：
+要求 Go 1.25，并设置 `GOEXPERIMENT=jsonv2`。发行产物必须由 GitHub Actions
+生成；本地脚本仅用于开发验证，并要求显式启用：
 
 ```bash
 ALLOW_LOCAL_BUILD=1 ./build.sh -p linux -a amd64
@@ -96,110 +172,26 @@ $env:ALLOW_LOCAL_BUILD="1"
 .\build.ps1 -Platform windows -Arch amd64
 ```
 
-清理本地构建残留可直接运行，不需要 opt-in：
+测试：
 
 ```bash
-./build.sh --clean
+GOEXPERIMENT=jsonv2 GOWORK=off go test ./...
+bash api/grpc/gen.sh
+git diff --exit-code -- api/grpc/v2boardpb api/grpc/agent/v1
 ```
-
-### 3. 运行
-
-```bash
-V2bX server -c /etc/V2bX/config.json
-```
-
-Windows:
-
-```powershell
-.\V2bX.exe server -c .\config.json
-```
-
-## 与面板对接
-
-默认对接 API（示例）：
-- `GET /api/v2/server/UniProxy/config`
-- `GET /api/v2/server/UniProxy/user`
-- `GET /api/v2/server/UniProxy/alivelist`
-- `POST /api/v2/server/UniProxy/push`
-- `POST /api/v2/server/UniProxy/alive`
-
-UniProxy 鉴权约定：
-- Query: `node_id`（必填）+ `node_type`（可选）
-- Header: `X-API-Key: <api_key>`（必填）
-
-请确保面板端版本与本仓库对应，优先使用：
-[AnixOps/v2board_AnixOps](https://github.com/AnixOps/v2board_AnixOps)
 
 ## 文档
 
-- [Release 安装指南](./docs/INSTALL.md)
-- [旧版迁移与回滚方案](./docs/MIGRATION.md)
-- [API 文档](./docs/API_DOCUMENTATION.md)
-- [后端 API 问题分析](./docs/BACKEND_API_ISSUES.md)
-- [v2.3.1 到 v2.5.0 发布规划](./docs/RELEASE_PLAN_2.3.1_TO_2.5.0.md)
-- `docs/PROTOCOL_CONFIG_*.md` 协议配置规范
-
-## 贡献
-
-欢迎通过 Issue / PR 提交问题与改进建议。
+- [Release 安装指南](docs/INSTALL.md)
+- [AnixOps Agent 迁移指南](docs/ANIX_AGENT_MIGRATION.md)
+- [运行时与协议迁移](docs/MIGRATION.md)
+- [API 文档](API_DOCUMENTATION.md)
+- [WireGuard 运行时测试](docs/WIREGUARD_RUNTIME_TESTS.md)
 
 ## 致谢
 
+- [V2bX](https://github.com/wyx2685/V2bX)
 - [Project X](https://github.com/XTLS/)
 - [V2Fly](https://github.com/v2fly)
 - [XrayR](https://github.com/XrayR/XrayR)
 - [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
-
-## gRPC transport (official)
-
-Node API transport can now be selected by `Transport` in each node config:
-
-- `Transport: "http"` (default, keeps existing REST + WebSocket behavior)
-- `Transport: "grpc"` (uses gRPC APIs)
-
-Example gRPC fields:
-
-```json
-{
-  "ApiHost": "https://panel.example.com",
-  "Transport": "grpc",
-  "GRPCHost": "panel.example.com:443",
-  "GRPCUseTLS": true,
-  "GRPCServerName": "panel.example.com",
-  "GRPCKeepalive": 30,
-  "NodeID": 1,
-  "ApiKey": "your-api-key"
-}
-```
-
-Notes:
-
-- If `GRPCHost` is empty, runtime will try to derive gRPC target from `ApiHost`.
-- gRPC mode keeps periodic pull/report tasks (`PullInterval` / `PushInterval`).
-- WebSocket sync manager is currently enabled only for REST transport.
-- Auto-register and credential storage (plain/encrypted) are supported in gRPC mode.
-- Outgoing gRPC metadata includes `x-api-key`, `x-node-id`, and `x-node-type`.
-
-Proto and codegen:
-
-- Proto source: `api/grpc/v2board.proto`
-- Regenerate stubs (Linux/macOS): `bash api/grpc/gen.sh`
-- Regenerate stubs (Windows): `powershell -ExecutionPolicy Bypass -File api/grpc/gen.ps1`
-
-### initconfig (gRPC)
-
-If you use the AnixOps visual CLI (`v2bx-anixops`), you can initialize config with the wizard:
-
-```bash
-v2bx-anixops initconfig
-```
-
-When selecting `Transport=grpc`, fill these fields (matching `conf.ApiConfig`):
-
-- `ApiHost`: panel URL (example: `https://panel.example.com`)
-- `GRPCHost`: gRPC target `host:port` (example: `panel.example.com:443`)
-- `GRPCUseTLS`: `true` if using TLS
-- `GRPCServerName`: TLS SNI / cert verification hostname (often same as domain)
-- `GRPCKeepalive`: keepalive seconds (default `30`)
-
-Other required fields are still the same (for example `NodeID`, `ApiKey`, `NodeType`).

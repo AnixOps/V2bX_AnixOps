@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/InazumaV/V2bX/api/panel"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
 )
 
 type networkPathRuntime struct {

@@ -1,6 +1,6 @@
 ---
 name: "Bug 反馈"
-about: 创建一个报告以帮助我们修复并改进V2bX
+about: 创建一个报告以帮助我们修复并改进 AnixOps Agent
 title: ''
 labels: 
 assignees: ''
@@ -17,7 +17,7 @@ assignees: ''
 
 
 **日志和错误**
-请使用`v2bx log`查看并添加日志，没有日志的issue不会得到答复并且会被直接关闭
+请使用 `anix-agent log` 查看并添加脱敏日志；不要提交 API key、证书私钥或注册凭证
 
 
 

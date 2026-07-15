@@ -2,24 +2,24 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/InazumaV/V2bX/common/exec"
+	"github.com/AnixOps/anix-agent/v3/common/exec"
 )
 
 const (
-	red    = "\033[0;31m"
-	green  = "\033[0;32m"
-	yellow = "\033[0;33m"
-	plain  = "\033[0m"
+	red               = "\033[0;31m"
+	green             = "\033[0;32m"
+	yellow            = "\033[0;33m"
+	plain             = "\033[0m"
+	cliName           = "anix-agent"
+	productName       = "AnixOps Agent"
+	serviceName       = "anix-agent.service"
+	defaultConfigPath = "/etc/anixops/agent/config.json"
 )
 
 func checkRunning() (bool, error) {
-	o, err := exec.RunCommandByShell("systemctl status V2bX | grep Active")
-	if err != nil {
-		return false, err
-	}
-	return strings.Contains(o, "running"), nil
+	_, err := exec.RunCommandByShell("systemctl is-active --quiet " + serviceName)
+	return err == nil, nil
 }
 
 func Err(msg ...any) string {

@@ -1,5 +1,5 @@
 #!/bin/bash
-# V2bX Build Script for Linux/macOS
+# AnixOps Agent Build Script for Linux/macOS
 # Usage: ./build.sh [-p platform] [-a arch] [--all] [--clean]
 #
 # Release builds must be produced by GitHub Actions. This script is kept for
@@ -21,14 +21,14 @@ export GOEXPERIMENT="jsonv2"
 export CGO_ENABLED=0
 
 # 项目信息
-PROJECT_NAME="V2bX"
+PROJECT_NAME="anix-agent"
 OUTPUT_DIR="build"
 VERSION=$(git describe --tags --always 2>/dev/null | sed 's/^v//' || echo "dev")
 BUILD_TIME=$(date '+%Y-%m-%d %H:%M:%S')
 GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 
 # LDFlags
-LDFLAGS="-s -w -X 'main.Version=${VERSION}' -X 'main.BuildTime=${BUILD_TIME}' -X 'main.GitCommit=${GIT_COMMIT}'"
+LDFLAGS="-s -w -X 'github.com/AnixOps/anix-agent/v3/cmd.version=${VERSION}'"
 
 # 默认值
 PLATFORM=""
@@ -159,7 +159,7 @@ build_binary() {
 
 # 打印头部信息
 echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}  V2bX Build Script${NC}"
+echo -e "${CYAN}  AnixOps Agent Build Script${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo -e "${WHITE}Version:    ${VERSION}${NC}"
 echo -e "${WHITE}Git Commit: ${GIT_COMMIT}${NC}"

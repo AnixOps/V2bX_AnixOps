@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/InazumaV/V2bX/api/panel"
-	"github.com/InazumaV/V2bX/common/monitor"
-	"github.com/InazumaV/V2bX/common/utils"
-	"github.com/InazumaV/V2bX/conf"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v3/common/monitor"
+	"github.com/AnixOps/anix-agent/v3/common/utils"
+	"github.com/AnixOps/anix-agent/v3/conf"
 	"github.com/sirupsen/logrus"
 )
 

@@ -6,7 +6,7 @@
   "Cores": [
     {
       "Type": "wireguard",
-      "RuntimeDir": "/etc/V2bX/wireguard",
+      "RuntimeDir": "/etc/anixops/agent/wireguard",
       "WGPath": "wg",
       "IPPath": "ip",
       "TCPath": "tc",
@@ -22,6 +22,11 @@
       "Core": "wireguard",
       "ApiHost": "https://panel.example.com",
       "Transport": "http",
+      "GRPCHost": "panel.example.com:443",
+      "GRPCUseTLS": true,
+      "GRPCServerName": "panel.example.com",
+      "AgentControlEnabled": true,
+      "AgentControlAllowInsecure": false,
       "ApiKey": "replace-with-node-api-key",
       "NodeID": 1,
       "NodeType": "wireguard",

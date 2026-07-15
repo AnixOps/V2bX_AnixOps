@@ -1,30 +1,29 @@
-﻿param(
-    [string]$ProtoFile = "api/grpc/v2board.proto"
-)
+param()
 
 $ErrorActionPreference = "Stop"
+$ModulePath = "github.com/AnixOps/anix-agent/v3"
+$ProtoFiles = @(
+    "api/grpc/v2board.proto",
+    "api/grpc/agent/v1/agent.proto"
+)
 
-if (-not (Get-Command protoc -ErrorAction SilentlyContinue)) {
-    throw "protoc not found. Install Protocol Buffers compiler first."
-}
-if (-not (Get-Command protoc-gen-go -ErrorAction SilentlyContinue)) {
-    throw "protoc-gen-go not found. Install with: go install google.golang.org/protobuf/cmd/protoc-gen-go@latest"
-}
-if (-not (Get-Command protoc-gen-go-grpc -ErrorAction SilentlyContinue)) {
-    throw "protoc-gen-go-grpc not found. Install with: go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest"
+foreach ($CommandName in @("protoc", "protoc-gen-go", "protoc-gen-go-grpc")) {
+    if (-not (Get-Command $CommandName -ErrorAction SilentlyContinue)) {
+        throw "$CommandName not found"
+    }
 }
 
-$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-Push-Location $repoRoot
+$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+Push-Location $RepoRoot
 try {
     protoc `
         --go_out=. `
-        --go_opt=paths=source_relative `
+        "--go_opt=module=$ModulePath" `
         --go-grpc_out=. `
-        --go-grpc_opt=paths=source_relative `
-        $ProtoFile
+        "--go-grpc_opt=module=$ModulePath" `
+        $ProtoFiles
 
-    Write-Host "Generated: api/grpc/v2boardpb/*.go"
+    Write-Host "Generated legacy and AnixOps Agent gRPC bindings."
 }
 finally {
     Pop-Location

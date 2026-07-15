@@ -7,10 +7,10 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/InazumaV/V2bX/conf"
-	vCore "github.com/InazumaV/V2bX/core"
-	"github.com/InazumaV/V2bX/limiter"
-	"github.com/InazumaV/V2bX/node"
+	"github.com/AnixOps/anix-agent/v3/conf"
+	vCore "github.com/AnixOps/anix-agent/v3/core"
+	"github.com/AnixOps/anix-agent/v3/limiter"
+	"github.com/AnixOps/anix-agent/v3/node"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )
@@ -23,7 +23,7 @@ var (
 
 var serverCommand = cobra.Command{
 	Use:   "server",
-	Short: "Run V2bX server",
+	Short: "Run AnixOps Agent",
 	Run:   serverHandle,
 	Args:  cobra.NoArgs,
 }
@@ -58,8 +58,8 @@ func getDefaultConfigPath() string {
 		}
 		return "config.json"
 	}
-	// Linux/macOS: 使用 /etc/V2bX/config.json
-	return "/etc/V2bX/config.json"
+	// Linux/macOS 使用 AnixOps Agent 的标准配置目录。
+	return defaultConfigPath
 }
 
 func serverHandle(_ *cobra.Command, _ []string) {
@@ -68,12 +68,12 @@ func serverHandle(_ *cobra.Command, _ []string) {
 	// 检查配置文件是否存在
 	if _, err := os.Stat(config); os.IsNotExist(err) {
 		log.WithField("path", config).Error("Config file not found")
-		log.Info("Usage: V2bX server -c /path/to/config.json")
-		log.Info("       V2bX -c /path/to/config.json")
+		log.Info("Usage: anix-agent server -c /path/to/config.json")
+		log.Info("       anix-agent -c /path/to/config.json")
 		if runtime.GOOS == "windows" {
 			log.Info("On Windows, you can place config.json in the same directory as the executable")
 		} else {
-			log.Info("On Linux/macOS, the default config path is /etc/V2bX/config.json")
+			log.Info("On Linux/macOS, the default config path is " + defaultConfigPath)
 		}
 		return
 	}
@@ -103,7 +103,7 @@ func serverHandle(_ *cobra.Command, _ []string) {
 		log.SetOutput(f)
 	}
 	limiter.Init()
-	log.Info("Start V2bX...")
+	log.Info("Start AnixOps Agent...")
 	vc, err := vCore.NewCore(c.CoresConfig)
 	if err != nil {
 		log.WithField("err", err).Error("new core failed")

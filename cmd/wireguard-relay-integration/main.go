@@ -14,10 +14,10 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/InazumaV/V2bX/api/panel"
-	"github.com/InazumaV/V2bX/conf"
-	vCore "github.com/InazumaV/V2bX/core"
-	"github.com/InazumaV/V2bX/core/wireguard"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v3/conf"
+	vCore "github.com/AnixOps/anix-agent/v3/core"
+	"github.com/AnixOps/anix-agent/v3/core/wireguard"
 )
 
 type options struct {
@@ -73,7 +73,7 @@ func (paths *networkPathFlags) Set(value string) error {
 func main() {
 	var opts options
 	flag.StringVar(&opts.role, "role", "", "relay role: entry or exit")
-	flag.StringVar(&opts.tag, "tag", "wireguard-integration", "V2bX node tag")
+	flag.StringVar(&opts.tag, "tag", "wireguard-integration", "AnixOps Agent node tag")
 	flag.StringVar(&opts.runtimeDir, "runtime-dir", "", "private directory for generated WireGuard config")
 	flag.StringVar(&opts.readyFile, "ready-file", "", "path written after the relay role is ready")
 	flag.StringVar(&opts.gostPath, "gost-path", "gost", "path to the GOST v3 executable")

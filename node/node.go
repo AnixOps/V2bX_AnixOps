@@ -4,15 +4,17 @@ import (
 	"fmt"
 	"strings"
 
-	apiclient "github.com/InazumaV/V2bX/api/client"
-	grpcapi "github.com/InazumaV/V2bX/api/grpc"
-	"github.com/InazumaV/V2bX/api/panel"
-	"github.com/InazumaV/V2bX/conf"
-	vCore "github.com/InazumaV/V2bX/core"
+	agentapi "github.com/AnixOps/anix-agent/v3/api/agent"
+	apiclient "github.com/AnixOps/anix-agent/v3/api/client"
+	grpcapi "github.com/AnixOps/anix-agent/v3/api/grpc"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v3/conf"
+	vCore "github.com/AnixOps/anix-agent/v3/core"
 )
 
 type Node struct {
-	controllers []*Controller
+	controllers  []*Controller
+	agentClients []*agentapi.Client
 }
 
 func New() *Node {
@@ -53,6 +55,8 @@ func initialNodeType(nodeType, coreType string) string {
 
 func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 	n.controllers = make([]*Controller, len(nodes))
+	n.agentClients = nil
+	startedAgentNodes := make(map[int]struct{})
 	for i := range nodes {
 		nodes[i].ApiConfig.NodeType = initialNodeType(nodes[i].ApiConfig.NodeType, nodes[i].Options.Core)
 		client, err := createAPIClient(&nodes[i].ApiConfig)
@@ -69,11 +73,30 @@ func (n *Node) Start(nodes []conf.NodeConfig, core vCore.Core) error {
 				nodes[i].ApiConfig.NodeID,
 				err)
 		}
+		nodeID := client.GetNodeID()
+		if _, started := startedAgentNodes[nodeID]; !started && nodes[i].ApiConfig.AgentControlEnabled {
+			if agentClient, agentErr := newAgentControlClient(&nodes[i].ApiConfig, n.controllers[i], core); agentErr != nil {
+				logAgentControlUnavailable(nodeID, agentErr)
+			} else {
+				if agentErr := agentClient.Start(); agentErr != nil {
+					logAgentControlUnavailable(nodeID, agentErr)
+				} else {
+					n.agentClients = append(n.agentClients, agentClient)
+					startedAgentNodes[nodeID] = struct{}{}
+				}
+			}
+		}
 	}
 	return nil
 }
 
 func (n *Node) Close() {
+	for _, client := range n.agentClients {
+		if err := client.Close(); err != nil {
+			panic(err)
+		}
+	}
+	n.agentClients = nil
 	for _, c := range n.controllers {
 		err := c.Close()
 		if err != nil {

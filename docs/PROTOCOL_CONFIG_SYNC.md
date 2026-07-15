@@ -1,4 +1,9 @@
-# V2bX 多协议配置与同步机制设计文档
+# AnixOps Agent 多协议配置与同步机制设计文档
+
+> 状态说明：本文保留早期 WebSocket/轮询设计作为兼容背景。`v3.0.0-alpha.1`
+> 已引入 opt-in 的 `anix.agent.v1` 双向 gRPC 控制流，作为 Agent-first
+> foundation/preview；REST/UniProxy、旧版 gRPC 和 WebSocket 仍是数据面或回退
+> 路径，新控制流尚未接管所有生产任务源。
 
 ## 目录
 
@@ -245,12 +250,15 @@ func (c *Controller) nodeInfoMonitor() error {
 
 | 协议 | 优点 | 缺点 | 适用场景 |
 |-----|------|-----|---------|
-| **WebSocket** | 全双工、低延迟、原生二进制支持 | 需要维护连接、代理兼容性 | 首选方案 |
+| **WebSocket** | 全双工、低延迟、原生二进制支持 | 需要维护连接、代理兼容性 | 旧版实时同步兼容路径 |
 | **SSE** | 简单、HTTP 兼容、自动重连 | 单向、文本模式 | 备选方案 |
 | **Long Polling** | 最广泛兼容 | 延迟较高、资源消耗 | 兜底方案 |
-| **gRPC Streaming** | 高性能、类型安全 | 需要额外依赖、HTTP/2 | 高性能场景 |
+| **gRPC Streaming** | 双向、类型安全、原生操作确认与状态观察 | 需要 HTTP/2、TLS 和幂等操作设计 | v3 alpha Agent-first 主控预览（显式 opt-in） |
 
-**推荐: WebSocket + HTTP 混合模式**
+**v3 alpha 推荐：`anix.agent.v1` gRPC 控制流 + 已验证的 REST/旧 gRPC 数据面回退。**
+
+旧版 WebSocket + HTTP 混合模式继续兼容，但不再代表 Agent-first 的目标架构。
+在新控制流覆盖全部任务源并完成持久化/重启验证前，不应删除这些回退路径。
 
 ### 4.3 消息类型定义
 
@@ -742,6 +750,10 @@ func (sm *SyncManager) Close() error {
 ---
 
 ## 5. 实现计划
+
+以下阶段记录的是早期 WebSocket 方案。当前 v3 alpha 的实现与交付语义以
+`api/grpc/agent/v1/PROTOCOL.md` 为准；尚未迁移的任务源继续按本节兼容方案
+运行。
 
 ### 5.1 Phase 1: 基础设施 (Week 1)
 

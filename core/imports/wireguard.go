@@ -1,3 +1,3 @@
 package imports
 
-import _ "github.com/InazumaV/V2bX/core/wireguard"
+import _ "github.com/AnixOps/anix-agent/v3/core/wireguard"

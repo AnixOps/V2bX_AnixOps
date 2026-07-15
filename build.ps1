@@ -1,4 +1,4 @@
-# V2bX Build Script for Windows PowerShell
+# AnixOps Agent Build Script for Windows PowerShell
 # Usage: .\build.ps1 [-Platform <platform>] [-Arch <arch>] [-Tags <tags>] [-All]
 #
 # Release builds must be produced by GitHub Actions. This script is kept for
@@ -20,7 +20,7 @@ $env:GOEXPERIMENT = "jsonv2"
 $env:CGO_ENABLED = "0"
 
 # 项目信息
-$ProjectName = "V2bX"
+$ProjectName = "anix-agent"
 $OutputDir = "build"
 $Version = (git describe --tags --always 2>$null) -replace '^v', ''
 if (-not $Version) { $Version = "dev" }
@@ -29,7 +29,7 @@ $GitCommit = git rev-parse --short HEAD 2>$null
 if (-not $GitCommit) { $GitCommit = "unknown" }
 
 # LDFlags
-$LDFlags = "-s -w -X 'main.Version=$Version' -X 'main.BuildTime=$BuildTime' -X 'main.GitCommit=$GitCommit'"
+$LDFlags = "-s -w -X 'github.com/AnixOps/anix-agent/v3/cmd.version=$Version'"
 
 # 支持的平台和架构
 $Platforms = @(
@@ -112,7 +112,7 @@ if (-not (Test-Path $OutputDir)) {
 }
 
 Write-ColorOutput -ForegroundColor Cyan -Message "========================================"
-Write-ColorOutput -ForegroundColor Cyan -Message "  V2bX Build Script"
+Write-ColorOutput -ForegroundColor Cyan -Message "  AnixOps Agent Build Script"
 Write-ColorOutput -ForegroundColor Cyan -Message "========================================"
 Write-ColorOutput -ForegroundColor White -Message "Version:    $Version"
 Write-ColorOutput -ForegroundColor White -Message "Git Commit: $GitCommit"

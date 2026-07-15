@@ -3,7 +3,7 @@ package grpc
 import (
 	"testing"
 
-	pb "github.com/InazumaV/V2bX/api/grpc/v2boardpb"
+	pb "github.com/AnixOps/anix-agent/v3/api/grpc/v2boardpb"
 )
 
 func TestParseWireGuardRelayPreservesWSSCertificateContract(t *testing.T) {

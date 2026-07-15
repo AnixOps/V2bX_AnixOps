@@ -20,9 +20,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/InazumaV/V2bX/api/panel"
-	"github.com/InazumaV/V2bX/conf"
-	vCore "github.com/InazumaV/V2bX/core"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v3/conf"
+	vCore "github.com/AnixOps/anix-agent/v3/core"
 )
 
 var _ vCore.Core = (*WireGuard)(nil)

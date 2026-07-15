@@ -19,6 +19,8 @@ quic_singbox.sh
 V2bX_windows_amd64.exe
 V2bX
 V2bX.exe
+anix-agent
+anix-agent.exe
 *.log
 config.debug.json
 data/credential.json.enc
@@ -38,4 +40,3 @@ node/cert/
 data/*.enc
 build/
 logs/
-

@@ -1,6 +1,7 @@
 package conf
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 )
@@ -12,6 +13,38 @@ func TestConf_LoadFromPath(t *testing.T) {
 	}
 	if len(c.NodeConfig) == 0 {
 		t.Fatal("LoadFromPath() loaded no nodes")
+	}
+	if !c.NodeConfig[0].ApiConfig.AgentControlEnabled {
+		t.Fatal("example config must explicitly enable the v3 Agent control stream")
+	}
+}
+
+func TestApiConfigAgentControlRequiresExplicitOptIn(t *testing.T) {
+	var legacy ApiConfig
+	if err := json.Unmarshal([]byte(`{"ApiHost":"http://127.0.0.1","NodeID":1,"ApiKey":"key"}`), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy API config: %v", err)
+	}
+	if legacy.AgentControlEnabled {
+		t.Fatal("legacy config without AgentControlEnabled unexpectedly enabled the control stream")
+	}
+
+	var current ApiConfig
+	if err := json.Unmarshal([]byte(`{"AgentControlEnabled":true}`), &current); err != nil {
+		t.Fatalf("unmarshal current API config: %v", err)
+	}
+	if !current.AgentControlEnabled {
+		t.Fatal("AgentControlEnabled=true was not preserved")
+	}
+	if current.AgentControlAllowInsecure {
+		t.Fatal("AgentControlAllowInsecure unexpectedly defaults to true")
+	}
+
+	var insecure ApiConfig
+	if err := json.Unmarshal([]byte(`{"AgentControlAllowInsecure":true}`), &insecure); err != nil {
+		t.Fatalf("unmarshal insecure opt-in: %v", err)
+	}
+	if !insecure.AgentControlAllowInsecure {
+		t.Fatal("AgentControlAllowInsecure=true was not preserved")
 	}
 }
 

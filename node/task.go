@@ -1,14 +1,15 @@
 package node
 
 import (
+	"fmt"
 	"time"
 
-	apiclient "github.com/InazumaV/V2bX/api/client"
-	"github.com/InazumaV/V2bX/api/panel"
-	"github.com/InazumaV/V2bX/common/monitor"
-	"github.com/InazumaV/V2bX/common/task"
-	vCore "github.com/InazumaV/V2bX/core"
-	"github.com/InazumaV/V2bX/limiter"
+	apiclient "github.com/AnixOps/anix-agent/v3/api/client"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v3/common/monitor"
+	"github.com/AnixOps/anix-agent/v3/common/task"
+	vCore "github.com/AnixOps/anix-agent/v3/core"
+	"github.com/AnixOps/anix-agent/v3/limiter"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -58,6 +59,9 @@ func (c *Controller) startTasks(node *panel.NodeInfo) {
 }
 
 func (c *Controller) nodeInfoMonitor() (err error) {
+	c.reconcileMu.Lock()
+	defer c.reconcileMu.Unlock()
+
 	// get node info
 	newN, err := c.apiClient.GetNodeInfo()
 	if err != nil {
@@ -65,7 +69,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			"tag": c.tag,
 			"err": err,
 		}).Error("Get node info failed")
-		return nil
+		return fmt.Errorf("get node info: %w", err)
 	}
 	if newN != nil && newN.Type != "" {
 		c.apiClient.SetNodeType(newN.Type)
@@ -77,7 +81,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			"tag": c.tag,
 			"err": err,
 		}).Error("Get user list failed")
-		return nil
+		return fmt.Errorf("get user list: %w", err)
 	}
 	// get user alive
 	newA, err := c.apiClient.GetUserAlive()
@@ -86,7 +90,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			"tag": c.tag,
 			"err": err,
 		}).Error("Get alive list failed")
-		return nil
+		return fmt.Errorf("get alive list: %w", err)
 	}
 	if newN != nil {
 		c.info = newN
@@ -102,8 +106,8 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": err,
-			}).Panic("Delete node failed")
-			return nil
+			}).Error("Delete node failed")
+			return fmt.Errorf("delete node %s: %w", c.tag, err)
 		}
 
 		// Update limiter
@@ -127,7 +131,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 				"tag": c.tag,
 				"err": err,
 			}).Error("Update Rule failed")
-			return nil
+			return fmt.Errorf("update rules for node %s: %w", c.tag, err)
 		}
 
 		// check cert
@@ -138,7 +142,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 					"tag": c.tag,
 					"err": err,
 				}).Error("Request cert failed")
-				return nil
+				return fmt.Errorf("request certificate for node %s: %w", c.tag, err)
 			}
 		}
 		// add new node
@@ -147,8 +151,8 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 			log.WithFields(log.Fields{
 				"tag": c.tag,
 				"err": err,
-			}).Panic("Add node failed")
-			return nil
+			}).Error("Add node failed")
+			return fmt.Errorf("add node %s: %w", c.tag, err)
 		}
 		_, err = c.server.AddUsers(&vCore.AddUsersParams{
 			Tag:      c.tag,
@@ -160,7 +164,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 				"tag": c.tag,
 				"err": err,
 			}).Error("Add users failed")
-			return nil
+			return fmt.Errorf("add users to node %s: %w", c.tag, err)
 		}
 		// Check interval
 		if c.nodeInfoMonitorPeriodic.Interval != newN.PullInterval &&
@@ -208,7 +212,7 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 				"tag": c.tag,
 				"err": err,
 			}).Error("Delete users failed")
-			return nil
+			return fmt.Errorf("delete users from node %s: %w", c.tag, err)
 		}
 	}
 	if len(added) > 0 {
@@ -223,19 +227,12 @@ func (c *Controller) nodeInfoMonitor() (err error) {
 				"tag": c.tag,
 				"err": err,
 			}).Error("Add users failed")
-			return nil
+			return fmt.Errorf("add users to node %s: %w", c.tag, err)
 		}
 	}
 	if len(added) > 0 || len(deleted) > 0 {
 		// update Limiter
 		c.limiter.UpdateUser(c.tag, added, deleted)
-		if err != nil {
-			log.WithFields(log.Fields{
-				"tag": c.tag,
-				"err": err,
-			}).Error("limiter users failed")
-			return nil
-		}
 		// clear traffic record
 		if c.LimitConfig.EnableDynamicSpeedLimit {
 			for i := range deleted {

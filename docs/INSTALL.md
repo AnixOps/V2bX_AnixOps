@@ -1,105 +1,109 @@
-# V2bX Release Installation
+# AnixOps Agent Release Installation
 
-This guide installs `V2bX_AnixOps` from GitHub Release assets. The installer
-downloads one script and the selected release ZIP; it does not clone the
-repository and it does not compile Go code on the node host.
+This guide installs AnixOps Agent from GitHub Release assets. The installer
+does not clone the repository or compile Go code on the node host.
 
-Supported release installers are Linux `amd64` and Linux `arm64`. Use a
-version-pinned command for production so the installer, release archive, and
-management script all come from the same tag.
+Supported installer targets are Linux `amd64` and Linux `arm64`. Pin an exact
+tag in production so the installer, archive, management script, and checksum
+all come from the same release.
 
 ## Fresh Install
 
 Run as root on Debian/Ubuntu, RHEL-compatible Linux, Alpine, or Arch:
 
 ```bash
-export VERSION=v2.5.0
+export VERSION=v3.0.0-alpha.1
 curl -fsSL \
-  "https://raw.githubusercontent.com/AnixOps/V2bX_AnixOps/${VERSION}/scripts/install.sh" \
-  -o /tmp/v2bx-install.sh
-sudo bash /tmp/v2bx-install.sh "${VERSION}"
-rm -f /tmp/v2bx-install.sh
+  "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
+  -o /tmp/anix-agent-install.sh
+sudo bash /tmp/anix-agent-install.sh "${VERSION}"
+rm -f /tmp/anix-agent-install.sh
 ```
 
-The installer installs base tools when required, downloads the matching
-`V2bX-linux-64.zip` or `V2bX-linux-arm64-v8a.zip` asset, verifies its SHA-256
-against the release `.dgst` file, and creates the service:
+The installer downloads `anix-agent-linux-64.zip` or
+`anix-agent-linux-arm64-v8a.zip`, verifies SHA-256 from the matching `.dgst`,
+and installs these paths:
 
 | Path | Purpose |
 |---|---|
-| `/usr/local/V2bX/V2bX` | GitHub Actions-built node binary |
-| `/etc/V2bX/config.json` | Persistent node configuration |
-| `/etc/V2bX/credential.json*` | Auto-register credential when used |
-| `/usr/local/V2bX/backups/` | Previous binaries retained during update |
-| `/usr/local/V2bX/.release-version` | Installed release tag |
-| `v2bx-anixops` | Service and configuration manager |
+| `/usr/local/anixops-agent/anix-agent` | GitHub Actions-built Agent binary |
+| `/etc/anixops/agent/config.json` | Persistent node configuration |
+| `/etc/anixops/agent/credential.json*` | Auto-register credentials when used |
+| `/usr/local/anixops-agent/backups/` | Previous binaries retained during update |
+| `/usr/local/anixops-agent/.release-version` | Installed release tag |
+| `anix-agent.service` | systemd service (`anix-agent` on OpenRC) |
+| `anix-agent` | CLI and service/configuration manager |
 
-First installation does not start a usable node until configuration is set.
-Run the wizard, then inspect and start the service:
+If no configuration is available, the service is not started. Initialize and
+review the configuration first:
 
 ```bash
-sudo v2bx-anixops initconfig
-sudo v2bx-anixops config
-sudo v2bx-anixops start
-sudo v2bx-anixops status
-sudo v2bx-anixops log
+sudo anix-agent initconfig
+sudo anix-agent config
+sudo anix-agent start
+sudo anix-agent status
+sudo anix-agent log
 ```
 
-The wizard needs the panel URL, node ID, node API key, core type, and transport.
-For gRPC, also supply `GRPCHost`, TLS preference, SNI, and keepalive as needed.
-Do not paste API keys into shell history or public support logs.
+The wizard asks for panel URL, node ID, API key, core type, and the existing
+data-plane transport. It then asks separately whether to enable the v3 Agent
+Control stream. When enabled, configure its gRPC target, TLS preference, SNI,
+and keepalive settings. Never paste API keys into public logs or support tickets.
 
 ## Update And Rollback
 
-Update to an explicit stable tag with the same no-clone path:
+Install an exact stable or prerelease tag with the same command:
 
 ```bash
-export TARGET=v2.5.0
-curl -fsSL \
-  "https://raw.githubusercontent.com/AnixOps/V2bX_AnixOps/${TARGET}/scripts/install.sh" \
-  -o /tmp/v2bx-install.sh
-sudo bash /tmp/v2bx-install.sh "${TARGET}"
-rm -f /tmp/v2bx-install.sh
+sudo anix-agent update v3.0.0-rc.1
+sudo anix-agent status
 ```
 
-The installer preserves `/etc/V2bX`, backs up the existing executable, and
-restores that executable automatically if restarting the service fails. The
-configuration is intentionally not overwritten. To roll back, install the
-previous known-good release tag and then confirm service health:
+Accepted tag forms are `vX.Y.Z`, `vX.Y.Z-alpha[.N]`,
+`vX.Y.Z-beta[.N]`, and `vX.Y.Z-rc[.N]`.
 
-```bash
-sudo v2bx-anixops update v2.4.9
-sudo v2bx-anixops status
-```
+The installer preserves `/etc/anixops/agent`, backs up the current executable,
+and restores it if the new service cannot start. To roll back, install the
+previous verified tag and check service health.
 
-`v2bx-anixops update <tag>` fetches the installer from that exact tag. The
-unqualified `update` command uses the integration-branch installer to resolve
-the latest stable GitHub Release; use an explicit tag in production.
+## Legacy V2bX_AnixOps Upgrade
+
+The installer automatically detects `/etc/V2bX`, `/usr/local/V2bX`, and
+`V2bX.service`. It copies only files missing from the new configuration
+directory, backs up the old binary and service definition, then switches to
+`anix-agent.service`.
+
+The old directories are not deleted. These compatibility entries remain:
+
+| Legacy entry | Compatibility target |
+|---|---|
+| `V2bX` | `anix-agent` manager/CLI |
+| `v2bx-anixops` | `anix-agent` manager/CLI |
+| `V2bX.service` | `anix-agent.service` |
+| Legacy `V2bX-*` release ZIP | Installer fallback when a migration-period tag has no new-named asset |
+
+New releases publish only `anix-agent-*`. The new installer can consume an
+older `V2bX-*` asset and its `V2bX` executable name as a verified fallback.
+The v3 release line does not promise old asset filenames; its new archive only
+keeps a `V2bX -> anix-agent` executable symlink for command compatibility. See
+[ANIX_AGENT_MIGRATION.md](ANIX_AGENT_MIGRATION.md) before upgrading a
+production node.
 
 ## Panel Pairing
 
 Use the matching panel release. Create or rotate the node API key in the panel,
-then set it in `/etc/V2bX/config.json`. Verify these operations after startup:
+then set it in `/etc/anixops/agent/config.json`. Verify after startup:
 
 1. Node configuration pull succeeds.
-2. User list synchronization succeeds.
+2. User synchronization succeeds.
 3. Traffic and online reports arrive at the panel.
-4. HTTP/gRPC transport and TLS settings match the panel endpoint.
-
-For a full panel installation, see
-[v2board release installation](https://github.com/AnixOps/v2board_AnixOps/blob/v2.5.0/docs/guide/release-installation.md).
+4. The data-plane transport and optional Agent Control TLS settings match the
+   Control endpoint.
 
 ## WireGuard Relay Nodes
 
-WireGuard entry/exit nodes require more than the base V2bX install:
-
-1. Linux with `iproute2`, `wireguard-tools`, `iptables`, `tc`, and `/dev/net/tun`.
-2. A verified GOST v3 binary on the configured `GostPath`.
-3. A panel WireGuard protocol with entry/exit role, relay addresses, peer CIDR,
-   and QUIC by default or certificate-verified WSS fallback.
-4. One canary entry/exit pair before moving production users.
-
-Install platform packages before starting a WireGuard core on Debian/Ubuntu:
+WireGuard entry/exit nodes additionally require `iproute2`, `wireguard-tools`,
+`iptables`, `tc`, `/dev/net/tun`, and a checksum-verified GOST v3 binary.
 
 ```bash
 sudo apt-get update
@@ -108,19 +112,15 @@ sudo modprobe wireguard || true
 test -c /dev/net/tun
 ```
 
-Obtain GOST only from its upstream release and verify its published checksum.
-The release workflow verifies the exact GOST v3 binary used in the QUIC/WSS
-acceptance jobs. Do not substitute an unverified download or expose a WSS exit
-private key in a shared configuration repository.
-
-See [WIREGUARD_RUNTIME_TESTS.md](WIREGUARD_RUNTIME_TESTS.md) and
-[MIGRATION.md](MIGRATION.md) before enabling WireGuard on production nodes.
+Validate one canary entry/exit pair before moving production users. See
+[WIREGUARD_RUNTIME_TESTS.md](WIREGUARD_RUNTIME_TESTS.md) and
+[MIGRATION.md](MIGRATION.md).
 
 ## Operational Rules
 
-- Release artifacts are built and tested by GitHub Actions, not on the node.
-- Pin a tag for production and retain the downloaded checksum evidence.
-- Back up `/etc/V2bX` before using `initconfig`; the wizard will offer a backup
-  before it overwrites `config.json`.
-- Upgrade one node at a time and observe panel reports before draining the old
-  node.
+- Build release artifacts in GitHub Actions, not on the node.
+- Pin production deployments to a tag and retain checksum evidence.
+- Back up `/etc/anixops/agent` before overwriting configuration.
+- Upgrade one node at a time and observe panel reports before continuing.
+- Use `anix-agent uninstall` to preserve configuration; add `--purge` only when
+  the new configuration and migration backups should also be removed.

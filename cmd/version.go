@@ -18,9 +18,9 @@ const (
 )
 
 var (
-	version  = "TempVersion" //use ldflags replace
-	codename = "V2bX"
-	intro    = "A V2board backend based on multi core"
+	version  = "v3.0.0-alpha.1" // release builds replace this through ldflags
+	codename = productName
+	intro    = "AnixOps multi-core node agent"
 )
 
 var versionCommand = cobra.Command{
@@ -53,13 +53,7 @@ func rainbowText(text string) string {
 }
 
 func showVersion() {
-	fmt.Println(` 
-  _/      _/    _/_/    _/        _/      _/   
- _/      _/  _/    _/  _/_/_/      _/  _/      
-_/      _/      _/    _/    _/      _/         
- _/  _/      _/      _/    _/    _/  _/        
-  _/      _/_/_/_/  _/_/_/    _/      _/        `)
-	fmt.Println("              " + rainbowText("AnixOps edition") + "                   ")
+	fmt.Println(rainbowText(productName))
 	fmt.Printf("%s %s (%s) \n", codename, version, intro)
 	//fmt.Printf("Supported cores: %s\n", strings.Join(vCore.RegisteredCore(), ", "))
 	// Warning

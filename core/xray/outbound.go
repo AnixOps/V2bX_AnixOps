@@ -5,7 +5,7 @@ import (
 
 	"encoding/json"
 
-	conf2 "github.com/InazumaV/V2bX/conf"
+	conf2 "github.com/AnixOps/anix-agent/v3/conf"
 	"github.com/xtls/xray-core/core"
 	"github.com/xtls/xray-core/infra/conf"
 )

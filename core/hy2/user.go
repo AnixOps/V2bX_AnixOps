@@ -4,9 +4,9 @@ import (
 	"net"
 	"sync"
 
-	"github.com/InazumaV/V2bX/api/panel"
-	"github.com/InazumaV/V2bX/common/counter"
-	vCore "github.com/InazumaV/V2bX/core"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v3/common/counter"
+	vCore "github.com/AnixOps/anix-agent/v3/core"
 	"github.com/apernet/hysteria/core/v2/server"
 )
 

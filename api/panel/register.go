@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/InazumaV/V2bX/common/monitor"
-	"github.com/InazumaV/V2bX/common/sign"
-	"github.com/InazumaV/V2bX/common/utils"
+	"github.com/AnixOps/anix-agent/v3/common/monitor"
+	"github.com/AnixOps/anix-agent/v3/common/sign"
+	"github.com/AnixOps/anix-agent/v3/common/utils"
 	"github.com/go-resty/resty/v2"
 	"github.com/sirupsen/logrus"
 )
@@ -15,7 +15,7 @@ import (
 // 确保 utils 被使用
 var _ = utils.Redact
 
-const Version = "1.0.0"
+var Version = "3.0.0-alpha.1"
 
 // ========== 请求/响应结构 ==========
 

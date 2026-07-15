@@ -14,7 +14,7 @@ type WireGuardConfig struct {
 
 func NewWireGuardConfig() *WireGuardConfig {
 	return &WireGuardConfig{
-		RuntimeDir:                    "/etc/V2bX/wireguard",
+		RuntimeDir:                    "/etc/anixops/agent/wireguard",
 		WGPath:                        "wg",
 		IPPath:                        "ip",
 		TCPath:                        "tc",

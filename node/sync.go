@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	apiclient "github.com/InazumaV/V2bX/api/client"
-	"github.com/InazumaV/V2bX/api/panel"
-	"github.com/InazumaV/V2bX/common/sign"
-	vCore "github.com/InazumaV/V2bX/core"
+	apiclient "github.com/AnixOps/anix-agent/v3/api/client"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v3/common/sign"
+	vCore "github.com/AnixOps/anix-agent/v3/core"
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
 )

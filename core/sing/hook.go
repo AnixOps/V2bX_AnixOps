@@ -6,12 +6,12 @@ import (
 	"net"
 	"sync"
 
-	"github.com/InazumaV/V2bX/common/format"
-	"github.com/InazumaV/V2bX/common/rate"
+	"github.com/AnixOps/anix-agent/v3/common/format"
+	"github.com/AnixOps/anix-agent/v3/common/rate"
 
-	"github.com/InazumaV/V2bX/limiter"
+	"github.com/AnixOps/anix-agent/v3/limiter"
 
-	"github.com/InazumaV/V2bX/common/counter"
+	"github.com/AnixOps/anix-agent/v3/common/counter"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	N "github.com/sagernet/sing/common/network"

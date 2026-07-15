@@ -25,7 +25,13 @@ jobs:
       - name: Validate release installer syntax
         run: |
           bash -n scripts/install.sh
+          bash -n scripts/anix-agent.sh
           bash -n scripts/V2bX.sh
+          bash -n scripts/test_install_migration.sh
+          bash scripts/install.sh --help >/dev/null
+          bash scripts/anix-agent.sh --help >/dev/null
+          bash scripts/V2bX.sh --help >/dev/null
+          bash scripts/test_install_migration.sh
 
       - name: Enforce release build policy
         run: bash scripts/check_release_build_policy.sh
@@ -55,11 +61,11 @@ jobs:
       - name: Verify WireGuard relay and peer limit contract
         run: GOEXPERIMENT=jsonv2 GOWORK=off go test ./core/wireguard ./node -count=1
 
-      - name: Install protoc
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler
-          protoc --version
+      - name: Set up protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '29.2'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install protoc Go plugins
         run: |
@@ -71,4 +77,5 @@ jobs:
         shell: bash
         run: |
           bash api/grpc/gen.sh
-          git diff --exit-code api/grpc/v2boardpb
+          git diff --exit-code -- api/grpc/v2boardpb api/grpc/agent/v1
+          test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb api/grpc/agent/v1)"

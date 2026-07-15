@@ -9,7 +9,7 @@ import (
 
 	"encoding/json"
 
-	"github.com/InazumaV/V2bX/common/json5"
+	"github.com/AnixOps/anix-agent/v3/common/json5"
 )
 
 type NodeConfig struct {
@@ -31,11 +31,17 @@ type ApiConfig struct {
 	GRPCUseTLS     bool   `json:"GRPCUseTLS"`
 	GRPCServerName string `json:"GRPCServerName"`
 	GRPCKeepalive  int    `json:"GRPCKeepalive"` // seconds
-	NodeID         int    `json:"NodeID"`
-	NodeType       string `json:"NodeType"`
-	Key            string `json:"ApiKey"`
-	Timeout        int    `json:"Timeout"`
-	RuleListPath   string `json:"RuleListPath"`
+	// AgentControlEnabled opts this node into the v3 primary control stream.
+	// The zero value stays off so legacy configs do not start reconnecting unexpectedly.
+	AgentControlEnabled bool `json:"AgentControlEnabled"`
+	// AgentControlAllowInsecure must be explicitly enabled before the control
+	// stream will send node credentials over plaintext to a non-loopback target.
+	AgentControlAllowInsecure bool   `json:"AgentControlAllowInsecure"`
+	NodeID                    int    `json:"NodeID"`
+	NodeType                  string `json:"NodeType"`
+	Key                       string `json:"ApiKey"`
+	Timeout                   int    `json:"Timeout"`
+	RuleListPath              string `json:"RuleListPath"`
 
 	// 鑷姩鍙戠幇鐩稿叧閰嶇疆
 	AuthKey           string `json:"AuthKey"`           // 鎺堟潈瀵嗛挜 (棣栨娉ㄥ唽浣跨敤)

@@ -18,11 +18,11 @@ jobs:
     outputs:
       is_release_tag: ${{ steps.check.outputs.is_release_tag }}
     steps:
-      - name: Check release or RC tag
+      - name: Check release or prerelease tag
         id: check
         shell: bash
         run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]; then
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)(\.[0-9]+)?)?$ ]]; then
             echo "is_release_tag=true" >> "$GITHUB_OUTPUT"
             echo "Release tag accepted: ${GITHUB_REF_NAME}"
           else
@@ -41,6 +41,26 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: "1.25.0"
+
+      - name: Set up protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          version: '29.2'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install pinned protoc Go plugins
+        run: |
+          go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Check protobuf generated code
+        shell: bash
+        run: |
+          export PATH="$(go env GOPATH)/bin:${PATH}"
+          bash api/grpc/gen.sh
+          git diff --exit-code -- api/grpc/v2boardpb api/grpc/agent/v1
+          test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb api/grpc/agent/v1)"
 
       - name: Download dependencies
         run: go mod download
@@ -99,11 +119,12 @@ jobs:
             echo "version=${GITHUB_SHA}" >> "$GITHUB_ENV"
           fi
 
-      - name: Build V2bX
+      - name: Build AnixOps Agent
         run: |
           echo "version: $version"
           mkdir -p build_assets
-          GOEXPERIMENT=jsonv2 go build -v -o build_assets/V2bX -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath -ldflags "-X 'github.com/InazumaV/V2bX/cmd.version=$version' -s -w -buildid="
+          GOEXPERIMENT=jsonv2 go build -v -o build_assets/anix-agent -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" -trimpath -ldflags "-X 'github.com/AnixOps/anix-agent/v3/cmd.version=$version' -s -w -buildid="
+          ln -s anix-agent build_assets/V2bX
 
       - name: Prepare to release
         run: |
@@ -124,9 +145,10 @@ jobs:
         run: |
           pushd build_assets || exit 1
           touch -mt $(date +%Y01010000) *
-          zip -9vr ../V2bX-${{ matrix.asset_name }}.zip .
+          touch -h -mt $(date +%Y01010000) V2bX
+          zip -9vyr ../anix-agent-${{ matrix.asset_name }}.zip .
           popd || exit 1
-          FILE=./V2bX-${{ matrix.asset_name }}.zip
+          FILE=./anix-agent-${{ matrix.asset_name }}.zip
           DGST=$FILE.dgst
           for METHOD in {"md5","sha1","sha256","sha512"}
           do
@@ -138,8 +160,8 @@ jobs:
         with:
           name: package-${{ matrix.asset_name }}
           path: |
-            ./V2bX-${{ matrix.asset_name }}.zip
-            ./V2bX-${{ matrix.asset_name }}.zip.dgst
+            ./anix-agent-${{ matrix.asset_name }}.zip
+            ./anix-agent-${{ matrix.asset_name }}.zip.dgst
 
   wireguard-relay-integration:
     name: privileged WireGuard relay acceptance (${{ matrix.tunnel_type }})
@@ -221,9 +243,9 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
-          prerelease: ${{ contains(github.ref_name, '-rc.') }}
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
           files: |
-            dist/V2bX-linux-64.zip
-            dist/V2bX-linux-64.zip.dgst
-            dist/V2bX-linux-arm64-v8a.zip
-            dist/V2bX-linux-arm64-v8a.zip.dgst
+            dist/anix-agent-linux-64.zip
+            dist/anix-agent-linux-64.zip.dgst
+            dist/anix-agent-linux-arm64-v8a.zip
+            dist/anix-agent-linux-arm64-v8a.zip.dgst

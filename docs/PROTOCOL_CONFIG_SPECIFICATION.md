@@ -91,7 +91,7 @@ WireGuard access -> domestic entry termination -> GOST relay+QUIC -> overseas ex
 	"wss_path": "/ws",
 	"wss_secure": true,
 	"wss_server_name": "exit.example.com",
-	"wss_ca_file": "/etc/V2bX/certs/relay-ca.pem",
+	"wss_ca_file": "/etc/anixops/agent/certs/relay-ca.pem",
 	"wss_cert_file": "",
 	"wss_key_file": "",
     "exit_nat": true,
@@ -161,7 +161,7 @@ WireGuard 节点的 `/api/v2/server/UniProxy/user` 响应必须为每个用户�
 ```json
 {
   "Type": "wireguard",
-  "RuntimeDir": "/etc/V2bX/wireguard",
+  "RuntimeDir": "/etc/anixops/agent/wireguard",
   "WGPath": "wg",
   "IPPath": "ip",
   "TCPath": "tc",

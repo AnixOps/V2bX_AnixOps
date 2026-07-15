@@ -5,7 +5,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/InazumaV/V2bX/common/json5"
+	"github.com/AnixOps/anix-agent/v3/common/json5"
 
 	"encoding/json/v2"
 )

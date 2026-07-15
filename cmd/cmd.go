@@ -4,9 +4,9 @@ import (
 	"os"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v3/api/panel"
+	_ "github.com/AnixOps/anix-agent/v3/core/imports"
 	log "github.com/sirupsen/logrus"
-
-	_ "github.com/InazumaV/V2bX/core/imports"
 	"github.com/spf13/cobra"
 )
 
@@ -21,17 +21,17 @@ func (f *LocalTimeFormatter) Format(entry *log.Entry) ([]byte, error) {
 }
 
 var command = &cobra.Command{
-	Use:   "V2bX",
-	Short: "V2bX - A multi-protocol proxy node client",
-	Long: `V2bX is a multi-protocol proxy node client that supports 
-VMess, VLESS, Trojan, Shadowsocks, Hysteria, Hysteria2, TUIC, and AnyTLS protocols.
+	Use:   cliName,
+	Short: productName + " - multi-protocol proxy node agent",
+	Long: `AnixOps Agent is a multi-protocol proxy node agent that supports
+	VMess, VLESS, Trojan, Shadowsocks, Hysteria, Hysteria2, TUIC, and AnyTLS protocols.
 
-Usage:
-  V2bX -c config.json           Run with specified config file  
-  V2bX server -c config.json    Run with specified config file
-  V2bX server                   Run with default config file
-  V2bX version                  Show version information`,
-	// 直接运行 V2bX 或 V2bX -c xxx 时执行 server 命令
+	Usage:
+	  anix-agent -c config.json           Run with specified config file
+	  anix-agent server -c config.json    Run with specified config file
+	  anix-agent server                   Run with default config file
+	  anix-agent version                  Show version information`,
+	// 直接运行 anix-agent 或 anix-agent -c xxx 时执行 server 命令
 	Run: serverHandle,
 }
 
@@ -51,6 +51,8 @@ func init() {
 }
 
 func Run() {
+	panel.Version = version
+
 	// 检查是否是子命令（server, version 等）
 	if len(os.Args) > 1 {
 		firstArg := os.Args[1]

@@ -16,6 +16,11 @@
     {
       "Core": "xray",
       "ApiHost": "http://127.0.0.1:8080",
+      "Transport": "http",
+      "GRPCHost": "127.0.0.1:50051",
+      "GRPCUseTLS": false,
+      "AgentControlEnabled": true,
+      "AgentControlAllowInsecure": false,
       "AutoRegister": true,
       "AuthKey": "f73a544d44bb14aac36fc1bd7b55b140a24608124b3ec60cea711704e06dfc72",
       "NodeName": "Test-Node-01",

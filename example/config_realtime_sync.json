@@ -15,13 +15,19 @@
         "Server": "time.apple.com",
         "ServerPort": 0
       },
-      "OriginalPath": "/etc/V2bX/sing_origin.json"
+      "OriginalPath": "/etc/anixops/agent/sing_origin.json"
     }
   ],
   "Nodes": [
     {
       "Core": "sing",
       "ApiHost": "https://your-panel.com",
+      "Transport": "http",
+      "GRPCHost": "your-panel.com:443",
+      "GRPCUseTLS": true,
+      "GRPCServerName": "your-panel.com",
+      "AgentControlEnabled": true,
+      "AgentControlAllowInsecure": false,
       
       // 鑷姩娉ㄥ唽閰嶇疆
       "AutoRegister": true,
@@ -75,8 +81,8 @@
         "CertMode": "self",
         "RejectUnknownSni": false,
         "CertDomain": "example.com",
-        "CertFile": "/etc/V2bX/fullchain.cer",
-        "KeyFile": "/etc/V2bX/cert.key",
+        "CertFile": "/etc/anixops/agent/fullchain.cer",
+        "KeyFile": "/etc/anixops/agent/cert.key",
         "Provider": "cloudflare",
         "DNSEnv": {
           "EnvName": "env1"
@@ -85,4 +91,3 @@
     }
   ]
 }
-

@@ -3,14 +3,15 @@ package node
 import (
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
-	apiclient "github.com/InazumaV/V2bX/api/client"
-	"github.com/InazumaV/V2bX/api/panel"
-	"github.com/InazumaV/V2bX/common/task"
-	"github.com/InazumaV/V2bX/conf"
-	vCore "github.com/InazumaV/V2bX/core"
-	"github.com/InazumaV/V2bX/limiter"
+	apiclient "github.com/AnixOps/anix-agent/v3/api/client"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v3/common/task"
+	"github.com/AnixOps/anix-agent/v3/conf"
+	vCore "github.com/AnixOps/anix-agent/v3/core"
+	"github.com/AnixOps/anix-agent/v3/limiter"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -30,6 +31,7 @@ type Controller struct {
 	onlineIpReportPeriodic    *task.Task
 	syncManager               *SyncManager
 	logHook                   *RemoteLogHook
+	reconcileMu               sync.Mutex
 	*conf.Options
 }
 

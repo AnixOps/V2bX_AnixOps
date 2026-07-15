@@ -29,15 +29,15 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// 节点服务
+// 鑺傜偣鏈嶅姟
 type NodeServiceClient interface {
-	// 节点注册
+	// 鑺傜偣娉ㄥ唽
 	Register(ctx context.Context, in *NodeRegisterRequest, opts ...grpc.CallOption) (*NodeRegisterResponse, error)
-	// 获取节点配置
+	// 鑾峰彇鑺傜偣閰嶇疆
 	GetConfig(ctx context.Context, in *NodeConfigRequest, opts ...grpc.CallOption) (*NodeConfigResponse, error)
-	// 上报节点状态 (替代心跳)
+	// 涓婃姤鑺傜偣鐘舵€?(鏇夸唬蹇冭烦)
 	ReportStatus(ctx context.Context, in *NodeStatusRequest, opts ...grpc.CallOption) (*StatusResponse, error)
-	// 双向流：节点状态实时通信
+	// 鍙屽悜娴侊細鑺傜偣鐘舵€佸疄鏃堕€氫俊
 	StatusStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[NodeStatusRequest, NodeConfigResponse], error)
 }
 
@@ -96,15 +96,15 @@ type NodeService_StatusStreamClient = grpc.BidiStreamingClient[NodeStatusRequest
 // All implementations must embed UnimplementedNodeServiceServer
 // for forward compatibility.
 //
-// 节点服务
+// 鑺傜偣鏈嶅姟
 type NodeServiceServer interface {
-	// 节点注册
+	// 鑺傜偣娉ㄥ唽
 	Register(context.Context, *NodeRegisterRequest) (*NodeRegisterResponse, error)
-	// 获取节点配置
+	// 鑾峰彇鑺傜偣閰嶇疆
 	GetConfig(context.Context, *NodeConfigRequest) (*NodeConfigResponse, error)
-	// 上报节点状态 (替代心跳)
+	// 涓婃姤鑺傜偣鐘舵€?(鏇夸唬蹇冭烦)
 	ReportStatus(context.Context, *NodeStatusRequest) (*StatusResponse, error)
-	// 双向流：节点状态实时通信
+	// 鍙屽悜娴侊細鑺傜偣鐘舵€佸疄鏃堕€氫俊
 	StatusStream(grpc.BidiStreamingServer[NodeStatusRequest, NodeConfigResponse]) error
 	mustEmbedUnimplementedNodeServiceServer()
 }
@@ -242,6 +242,108 @@ var NodeService_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	NodeLogService_ReportLogs_FullMethodName = "/v2board.NodeLogService/ReportLogs"
+)
+
+// NodeLogServiceClient is the client API for NodeLogService service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type NodeLogServiceClient interface {
+	ReportLogs(ctx context.Context, in *NodeLogBatchRequest, opts ...grpc.CallOption) (*StatusResponse, error)
+}
+
+type nodeLogServiceClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewNodeLogServiceClient(cc grpc.ClientConnInterface) NodeLogServiceClient {
+	return &nodeLogServiceClient{cc}
+}
+
+func (c *nodeLogServiceClient) ReportLogs(ctx context.Context, in *NodeLogBatchRequest, opts ...grpc.CallOption) (*StatusResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(StatusResponse)
+	err := c.cc.Invoke(ctx, NodeLogService_ReportLogs_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// NodeLogServiceServer is the server API for NodeLogService service.
+// All implementations must embed UnimplementedNodeLogServiceServer
+// for forward compatibility.
+type NodeLogServiceServer interface {
+	ReportLogs(context.Context, *NodeLogBatchRequest) (*StatusResponse, error)
+	mustEmbedUnimplementedNodeLogServiceServer()
+}
+
+// UnimplementedNodeLogServiceServer must be embedded to have
+// forward compatible implementations.
+//
+// NOTE: this should be embedded by value instead of pointer to avoid a nil
+// pointer dereference when methods are called.
+type UnimplementedNodeLogServiceServer struct{}
+
+func (UnimplementedNodeLogServiceServer) ReportLogs(context.Context, *NodeLogBatchRequest) (*StatusResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportLogs not implemented")
+}
+func (UnimplementedNodeLogServiceServer) mustEmbedUnimplementedNodeLogServiceServer() {}
+func (UnimplementedNodeLogServiceServer) testEmbeddedByValue()                        {}
+
+// UnsafeNodeLogServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to NodeLogServiceServer will
+// result in compilation errors.
+type UnsafeNodeLogServiceServer interface {
+	mustEmbedUnimplementedNodeLogServiceServer()
+}
+
+func RegisterNodeLogServiceServer(s grpc.ServiceRegistrar, srv NodeLogServiceServer) {
+	// If the following call panics, it indicates UnimplementedNodeLogServiceServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
+	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
+		t.testEmbeddedByValue()
+	}
+	s.RegisterService(&NodeLogService_ServiceDesc, srv)
+}
+
+func _NodeLogService_ReportLogs_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(NodeLogBatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeLogServiceServer).ReportLogs(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeLogService_ReportLogs_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeLogServiceServer).ReportLogs(ctx, req.(*NodeLogBatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// NodeLogService_ServiceDesc is the grpc.ServiceDesc for NodeLogService service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var NodeLogService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "v2board.NodeLogService",
+	HandlerType: (*NodeLogServiceServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "ReportLogs",
+			Handler:    _NodeLogService_ReportLogs_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "api/grpc/v2board.proto",
+}
+
+const (
 	UserService_GetUsers_FullMethodName    = "/v2board.UserService/GetUsers"
 	UserService_UserChanges_FullMethodName = "/v2board.UserService/UserChanges"
 )
@@ -250,12 +352,12 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// 用户服务
+// 鐢ㄦ埛鏈嶅姟
 type UserServiceClient interface {
-	// 获取用户列表
+	// 鑾峰彇鐢ㄦ埛鍒楄〃
 	GetUsers(ctx context.Context, in *UserListRequest, opts ...grpc.CallOption) (*UserListResponse, error)
-	// 双向流：用户变更实时推送
-	// 面板推送用户变更，节点确认接收
+	// 鍙屽悜娴侊細鐢ㄦ埛鍙樻洿瀹炴椂鎺ㄩ€?
+	// 闈㈡澘鎺ㄩ€佺敤鎴峰彉鏇达紝鑺傜偣纭鎺ユ敹
 	UserChanges(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[UserChangeNotification, StatusResponse], error)
 }
 
@@ -294,12 +396,12 @@ type UserService_UserChangesClient = grpc.BidiStreamingClient[UserChangeNotifica
 // All implementations must embed UnimplementedUserServiceServer
 // for forward compatibility.
 //
-// 用户服务
+// 鐢ㄦ埛鏈嶅姟
 type UserServiceServer interface {
-	// 获取用户列表
+	// 鑾峰彇鐢ㄦ埛鍒楄〃
 	GetUsers(context.Context, *UserListRequest) (*UserListResponse, error)
-	// 双向流：用户变更实时推送
-	// 面板推送用户变更，节点确认接收
+	// 鍙屽悜娴侊細鐢ㄦ埛鍙樻洿瀹炴椂鎺ㄩ€?
+	// 闈㈡澘鎺ㄩ€佺敤鎴峰彉鏇达紝鑺傜偣纭鎺ユ敹
 	UserChanges(grpc.BidiStreamingServer[UserChangeNotification, StatusResponse]) error
 	mustEmbedUnimplementedUserServiceServer()
 }
@@ -397,16 +499,16 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// 流量服务
+// 娴侀噺鏈嶅姟
 type TrafficServiceClient interface {
-	// 批量上报流量
+	// 鎵归噺涓婃姤娴侀噺
 	ReportTraffic(ctx context.Context, in *TrafficReportRequest, opts ...grpc.CallOption) (*TrafficReportResponse, error)
-	// 上报在线状态
+	// 涓婃姤鍦ㄧ嚎鐘舵€?
 	ReportOnline(ctx context.Context, in *OnlineReportRequest, opts ...grpc.CallOption) (*StatusResponse, error)
-	// 双向流：实时流量上报
-	// 节点持续上报，面板实时响应
+	// 鍙屽悜娴侊細瀹炴椂娴侀噺涓婃姤
+	// 鑺傜偣鎸佺画涓婃姤锛岄潰鏉垮疄鏃跺搷搴?
 	TrafficStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TrafficReportRequest, TrafficReportResponse], error)
-	// 双向流：实时在线状态
+	// 鍙屽悜娴侊細瀹炴椂鍦ㄧ嚎鐘舵€?
 	OnlineStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[OnlineReportRequest, StatusResponse], error)
 }
 
@@ -468,16 +570,16 @@ type TrafficService_OnlineStreamClient = grpc.BidiStreamingClient[OnlineReportRe
 // All implementations must embed UnimplementedTrafficServiceServer
 // for forward compatibility.
 //
-// 流量服务
+// 娴侀噺鏈嶅姟
 type TrafficServiceServer interface {
-	// 批量上报流量
+	// 鎵归噺涓婃姤娴侀噺
 	ReportTraffic(context.Context, *TrafficReportRequest) (*TrafficReportResponse, error)
-	// 上报在线状态
+	// 涓婃姤鍦ㄧ嚎鐘舵€?
 	ReportOnline(context.Context, *OnlineReportRequest) (*StatusResponse, error)
-	// 双向流：实时流量上报
-	// 节点持续上报，面板实时响应
+	// 鍙屽悜娴侊細瀹炴椂娴侀噺涓婃姤
+	// 鑺傜偣鎸佺画涓婃姤锛岄潰鏉垮疄鏃跺搷搴?
 	TrafficStream(grpc.BidiStreamingServer[TrafficReportRequest, TrafficReportResponse]) error
-	// 双向流：实时在线状态
+	// 鍙屽悜娴侊細瀹炴椂鍦ㄧ嚎鐘舵€?
 	OnlineStream(grpc.BidiStreamingServer[OnlineReportRequest, StatusResponse]) error
 	mustEmbedUnimplementedTrafficServiceServer()
 }
@@ -615,14 +717,14 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// 配置同步服务
+// 閰嶇疆鍚屾鏈嶅姟
 type ConfigSyncServiceClient interface {
-	// 请求配置同步
+	// 璇锋眰閰嶇疆鍚屾
 	SyncConfig(ctx context.Context, in *ConfigSyncRequest, opts ...grpc.CallOption) (*ConfigSyncResponse, error)
-	// 双向流：配置变更实时推送
-	// 面板推送变更，节点确认接收
+	// 鍙屽悜娴侊細閰嶇疆鍙樻洿瀹炴椂鎺ㄩ€?
+	// 闈㈡澘鎺ㄩ€佸彉鏇达紝鑺傜偣纭鎺ユ敹
 	ConfigChanges(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ConfigChangeNotification, StatusResponse], error)
-	// 全量同步 (节点启动时)
+	// 鍏ㄩ噺鍚屾 (鑺傜偣鍚姩鏃?
 	FullSync(ctx context.Context, in *ConfigSyncRequest, opts ...grpc.CallOption) (*ConfigSyncResponse, error)
 }
 
@@ -671,14 +773,14 @@ func (c *configSyncServiceClient) FullSync(ctx context.Context, in *ConfigSyncRe
 // All implementations must embed UnimplementedConfigSyncServiceServer
 // for forward compatibility.
 //
-// 配置同步服务
+// 閰嶇疆鍚屾鏈嶅姟
 type ConfigSyncServiceServer interface {
-	// 请求配置同步
+	// 璇锋眰閰嶇疆鍚屾
 	SyncConfig(context.Context, *ConfigSyncRequest) (*ConfigSyncResponse, error)
-	// 双向流：配置变更实时推送
-	// 面板推送变更，节点确认接收
+	// 鍙屽悜娴侊細閰嶇疆鍙樻洿瀹炴椂鎺ㄩ€?
+	// 闈㈡澘鎺ㄩ€佸彉鏇达紝鑺傜偣纭鎺ユ敹
 	ConfigChanges(grpc.BidiStreamingServer[ConfigChangeNotification, StatusResponse]) error
-	// 全量同步 (节点启动时)
+	// 鍏ㄩ噺鍚屾 (鑺傜偣鍚姩鏃?
 	FullSync(context.Context, *ConfigSyncRequest) (*ConfigSyncResponse, error)
 	mustEmbedUnimplementedConfigSyncServiceServer()
 }
@@ -799,11 +901,11 @@ const (
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 //
-// 健康检查服务
+// 鍋ュ悍妫€鏌ユ湇鍔?
 type HealthServiceClient interface {
-	// 简单健康检查
+	// 绠€鍗曞仴搴锋鏌?
 	Check(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error)
-	// 双向流：持续健康检查
+	// 鍙屽悜娴侊細鎸佺画鍋ュ悍妫€鏌?
 	Watch(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[HealthCheckRequest, HealthCheckResponse], error)
 }
 
@@ -842,11 +944,11 @@ type HealthService_WatchClient = grpc.BidiStreamingClient[HealthCheckRequest, He
 // All implementations must embed UnimplementedHealthServiceServer
 // for forward compatibility.
 //
-// 健康检查服务
+// 鍋ュ悍妫€鏌ユ湇鍔?
 type HealthServiceServer interface {
-	// 简单健康检查
+	// 绠€鍗曞仴搴锋鏌?
 	Check(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
-	// 双向流：持续健康检查
+	// 鍙屽悜娴侊細鎸佺画鍋ュ悍妫€鏌?
 	Watch(grpc.BidiStreamingServer[HealthCheckRequest, HealthCheckResponse]) error
 	mustEmbedUnimplementedHealthServiceServer()
 }

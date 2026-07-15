@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	apiclient "github.com/InazumaV/V2bX/api/client"
-	"github.com/InazumaV/V2bX/api/panel"
+	apiclient "github.com/AnixOps/anix-agent/v3/api/client"
+	"github.com/AnixOps/anix-agent/v3/api/panel"
 	log "github.com/sirupsen/logrus"
 )
 
