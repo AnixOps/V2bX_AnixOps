@@ -86,6 +86,15 @@ type Applier interface {
 	Apply(ctx context.Context, nftBinary, ruleset string) error
 }
 
+type TableSnapshot struct {
+	Exists  bool
+	Ruleset string
+}
+
+type Snapshotter interface {
+	Snapshot(ctx context.Context, nftBinary, family, table string) (TableSnapshot, error)
+}
+
 type CommandApplier struct{}
 
 func (CommandApplier) Apply(ctx context.Context, nftBinary, ruleset string) error {
@@ -107,6 +116,31 @@ func (CommandApplier) Apply(ctx context.Context, nftBinary, ruleset string) erro
 		return fmt.Errorf("apply nftables transaction: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
+}
+
+func (CommandApplier) Snapshot(ctx context.Context, nftBinary, family, table string) (TableSnapshot, error) {
+	if strings.TrimSpace(nftBinary) == "" {
+		nftBinary = "nft"
+	}
+	command := exec.CommandContext(ctx, nftBinary, "list", "table", family, table)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		text := strings.TrimSpace(string(output))
+		if strings.Contains(text, "No such file or directory") ||
+			strings.Contains(text, "does not exist") ||
+			strings.Contains(text, "No such file") {
+			return TableSnapshot{Exists: false}, nil
+		}
+		return TableSnapshot{}, fmt.Errorf("snapshot nftables table: %w: %s", err, text)
+	}
+	ruleset := string(output)
+	if strings.TrimSpace(ruleset) == "" {
+		return TableSnapshot{}, errors.New("snapshot nftables table returned an empty ruleset")
+	}
+	if !strings.HasSuffix(ruleset, "\n") {
+		ruleset += "\n"
+	}
+	return TableSnapshot{Exists: true, Ruleset: ruleset}, nil
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -297,15 +331,22 @@ func RenderRuleset(config Config) (string, error) {
 		return "", errors.New("at least one forwarding rule is required")
 	}
 	var builder strings.Builder
+	fmt.Fprintf(&builder, "add table %s %s\n", config.Family, config.Table)
 	fmt.Fprintf(&builder, "flush table %s %s\n", config.Family, config.Table)
-	fmt.Fprintf(&builder, "table %s %s {\n", config.Family, config.Table)
-	fmt.Fprintf(&builder, "  chain %s {\n", config.Chain)
-	fmt.Fprintf(&builder, "    type nat hook prerouting priority %d; policy accept;\n", config.Priority)
+	fmt.Fprintf(&builder, "add chain %s %s %s { type nat hook prerouting priority %d; policy accept; }\n",
+		config.Family,
+		config.Table,
+		config.Chain,
+		config.Priority,
+	)
 	for _, rule := range config.Rules {
 		if err := validateRuleForFamily(config.Family, rule); err != nil {
 			return "", fmt.Errorf("rule %q: %w", rule.ID, err)
 		}
-		fmt.Fprintf(&builder, "    %s daddr %s %s dport %d dnat to %s comment %q\n",
+		fmt.Fprintf(&builder, "add rule %s %s %s %s daddr %s %s dport %d dnat to %s comment %q\n",
+			config.Family,
+			config.Table,
+			config.Chain,
 			nftAddressFamily(rule.ListenAddress),
 			formatNftAddress(rule.ListenAddress),
 			rule.Protocol,
@@ -314,8 +355,6 @@ func RenderRuleset(config Config) (string, error) {
 			nftComment(rule),
 		)
 	}
-	builder.WriteString("  }\n")
-	builder.WriteString("}\n")
 	return builder.String(), nil
 }
 
@@ -353,6 +392,24 @@ func Run(ctx context.Context, options Options) error {
 	applier := options.Applier
 	if applier == nil {
 		applier = CommandApplier{}
+	}
+	var rollbackRuleset string
+	if config.Apply && config.RollbackOnExit {
+		snapshotter, ok := applier.(Snapshotter)
+		if ok {
+			snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			snapshot, snapshotErr := snapshotter.Snapshot(snapshotCtx, config.NftBinary, config.Family, config.Table)
+			cancel()
+			if snapshotErr != nil {
+				return snapshotErr
+			}
+			rollbackRuleset, err = RenderRollbackFromSnapshot(config, snapshot)
+		} else {
+			rollbackRuleset, err = RenderRollback(config)
+		}
+		if err != nil {
+			return err
+		}
 	}
 	if config.Apply {
 		applyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
@@ -392,13 +449,15 @@ func Run(ctx context.Context, options Options) error {
 			return fmt.Errorf("serve plugin health API: %w", err)
 		}
 		if config.Apply && config.RollbackOnExit {
-			rollback, rollbackErr := RenderRollback(config)
-			if rollbackErr != nil {
-				return rollbackErr
+			if rollbackRuleset == "" {
+				rollbackRuleset, err = RenderRollback(config)
+				if err != nil {
+					return err
+				}
 			}
 			rollbackCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			if err := applier.Apply(rollbackCtx, config.NftBinary, rollback); err != nil {
+			if err := applier.Apply(rollbackCtx, config.NftBinary, rollbackRuleset); err != nil {
 				return err
 			}
 		}
@@ -415,7 +474,21 @@ func RenderRollback(config Config) (string, error) {
 	if err := validateRulesetNames(config); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("flush table %s %s\n", config.Family, config.Table), nil
+	return fmt.Sprintf("delete table %s %s\n", config.Family, config.Table), nil
+}
+
+func RenderRollbackFromSnapshot(config Config, snapshot TableSnapshot) (string, error) {
+	if err := validateRulesetNames(config); err != nil {
+		return "", err
+	}
+	if !snapshot.Exists {
+		return RenderRollback(config)
+	}
+	ruleset := strings.TrimSpace(snapshot.Ruleset)
+	if ruleset == "" {
+		return "", errors.New("snapshot ruleset is empty")
+	}
+	return fmt.Sprintf("flush table %s %s\n%s\n", config.Family, config.Table, ruleset), nil
 }
 
 func writePrivatePlan(path, ruleset string) error {

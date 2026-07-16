@@ -92,10 +92,11 @@ func TestRenderRulesetCoversTCPUDPAndFamilies(t *testing.T) {
 
 	ruleset, err := RenderRuleset(config)
 	require.NoError(t, err)
+	require.Contains(t, ruleset, "add table inet anixops_forward")
 	require.Contains(t, ruleset, "flush table inet anixops_forward")
-	require.Contains(t, ruleset, "type nat hook prerouting priority -90; policy accept;")
-	require.Contains(t, ruleset, `ip daddr 198.51.100.10 tcp dport 443 dnat to 203.0.113.10:8443 comment "anixops tcp-443 dedicated"`)
-	require.Contains(t, ruleset, `ip6 daddr 2001:db8::10 udp dport 443 dnat to [2001:db8::20]:8443 comment "anixops udp-443"`)
+	require.Contains(t, ruleset, "add chain inet anixops_forward prerouting { type nat hook prerouting priority -90; policy accept; }")
+	require.Contains(t, ruleset, `add rule inet anixops_forward prerouting ip daddr 198.51.100.10 tcp dport 443 dnat to 203.0.113.10:8443 comment "anixops tcp-443 dedicated"`)
+	require.Contains(t, ruleset, `add rule inet anixops_forward prerouting ip6 daddr 2001:db8::10 udp dport 443 dnat to [2001:db8::20]:8443 comment "anixops udp-443"`)
 
 	config.Family = "ip"
 	_, err = RenderRuleset(config)
@@ -166,12 +167,37 @@ func TestRunApplyAndRollbackOnExit(t *testing.T) {
 	calls := applier.Calls()
 	require.Len(t, calls, 2)
 	require.Contains(t, calls[0], "dnat to 203.0.113.10:8443")
-	require.Equal(t, "flush table inet anixops_forward\n", calls[1])
+	require.Equal(t, "delete table inet anixops_forward\n", calls[1])
+	snapshots := applier.Snapshots()
+	require.Equal(t, []string{"inet anixops_forward"}, snapshots)
+}
+
+func TestRenderRollbackFromSnapshotRestoresExistingTable(t *testing.T) {
+	config, err := ParseConfig([]byte(validConfigJSON("snapshot-1")))
+	require.NoError(t, err)
+	rollback, err := RenderRollbackFromSnapshot(config, TableSnapshot{
+		Exists: true,
+		Ruleset: `table inet anixops_forward {
+	chain prerouting {
+		type nat hook prerouting priority dstnat; policy accept;
+		ip daddr 198.51.100.20 tcp dport 443 dnat ip to 203.0.113.20:8443 comment "pre-existing"
+	}
+}
+`,
+	})
+	require.NoError(t, err)
+	require.Contains(t, rollback, "flush table inet anixops_forward")
+	require.Contains(t, rollback, `ip daddr 198.51.100.20 tcp dport 443 dnat ip to 203.0.113.20:8443 comment "pre-existing"`)
+
+	rollback, err = RenderRollbackFromSnapshot(config, TableSnapshot{Exists: false})
+	require.NoError(t, err)
+	require.Equal(t, "delete table inet anixops_forward\n", rollback)
 }
 
 type recordingApplier struct {
-	mu    sync.Mutex
-	calls []string
+	mu        sync.Mutex
+	calls     []string
+	snapshots []string
 }
 
 func (a *recordingApplier) Apply(ctx context.Context, nftBinary, ruleset string) error {
@@ -184,10 +210,26 @@ func (a *recordingApplier) Apply(ctx context.Context, nftBinary, ruleset string)
 	return nil
 }
 
+func (a *recordingApplier) Snapshot(ctx context.Context, nftBinary, family, table string) (TableSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return TableSnapshot{}, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.snapshots = append(a.snapshots, family+" "+table)
+	return TableSnapshot{Exists: false}, nil
+}
+
 func (a *recordingApplier) Calls() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]string(nil), a.calls...)
+}
+
+func (a *recordingApplier) Snapshots() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.snapshots...)
 }
 
 func waitForHealth(t *testing.T, socketPath string) *grpc.ClientConn {

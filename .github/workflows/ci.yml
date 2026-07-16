@@ -28,6 +28,7 @@ jobs:
           bash -n scripts/anix-agent.sh
           bash -n scripts/V2bX.sh
           bash -n scripts/test_install_migration.sh
+          bash -n plugin/nftablesforward/namespace_acceptance.sh
           bash scripts/install.sh --help >/dev/null
           bash scripts/anix-agent.sh --help >/dev/null
           bash scripts/V2bX.sh --help >/dev/null
