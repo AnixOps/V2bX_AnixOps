@@ -21,9 +21,27 @@ and sends retained operations as one serialized replay batch. The Agent checks
 revision freshness both on receipt and immediately before execution, reporting
 queued stale work as `SUPERSEDED` without invoking the runtime handler.
 
-Delivery is at least once, so handlers must be idempotent. Control's retained
-operation set is currently in memory, and the Agent's bounded completed-
-operation cache is not durable across process restarts.
+Plugin lifecycle operations use a strict JSON envelope inside
+`DesiredOperation.payload_json`. Schema `anixops.operation/v1` carries
+`operation_id`, `idempotency_key`, `session_id`, `revision`, `plugin_id`,
+`target_version`, `config_hash`, and `config`. Duplicated IDs and revisions
+must match the protobuf fields. The config hash is SHA-256 over the exact JSON
+bytes, and envelope `session_id` must match the active `HelloAck.session_id`;
+configuration may contain Secret IDs or `*_ref`, never secret values.
+
+An Agent advertises `plugin.inspect/configure/enable/disable/update/rollback/health`
+only with explicit `PluginSupervisorEnabled`. The Supervisor accepts official
+Ed25519-signed Agent artifacts, journals operations durably, and controls
+independent plugin processes over Unix socket gRPC. Legacy configurations do
+not advertise or execute plugin operations.
+
+Delivery is at least once, so handlers must be idempotent. The Control Kernel
+persists canonical operation config and the Supervisor persists its local
+journal. When Control enables `plugins.dispatch_enabled`, it claims pending
+lifecycle operations, injects the live session into the envelope, waits for
+receipt ACKs, and writes observed state back to the durable operation row. The
+Agent client's bounded completion cache remains an additional in-memory
+optimization.
 
 The first node integration supports `agent.ping`, `node.reload`, and
 `users.reload`. It does not claim the existing forward runtime has been fully

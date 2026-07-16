@@ -36,12 +36,18 @@ type ApiConfig struct {
 	AgentControlEnabled bool `json:"AgentControlEnabled"`
 	// AgentControlAllowInsecure must be explicitly enabled before the control
 	// stream will send node credentials over plaintext to a non-loopback target.
-	AgentControlAllowInsecure bool   `json:"AgentControlAllowInsecure"`
-	NodeID                    int    `json:"NodeID"`
-	NodeType                  string `json:"NodeType"`
-	Key                       string `json:"ApiKey"`
-	Timeout                   int    `json:"Timeout"`
-	RuleListPath              string `json:"RuleListPath"`
+	AgentControlAllowInsecure bool `json:"AgentControlAllowInsecure"`
+	// PluginSupervisorEnabled activates the local official-plugin Supervisor for
+	// this Agent process. It is off by default for legacy compatibility.
+	PluginSupervisorEnabled bool   `json:"PluginSupervisorEnabled"`
+	PluginRoot              string `json:"PluginRoot"`
+	PluginSocketDir         string `json:"PluginSocketDir"`
+	PluginOfficialPublicKey string `json:"PluginOfficialPublicKey"`
+	NodeID                  int    `json:"NodeID"`
+	NodeType                string `json:"NodeType"`
+	Key                     string `json:"ApiKey"`
+	Timeout                 int    `json:"Timeout"`
+	RuleListPath            string `json:"RuleListPath"`
 
 	// 鑷姩鍙戠幇鐩稿叧閰嶇疆
 	AuthKey           string `json:"AuthKey"`           // 鎺堟潈瀵嗛挜 (棣栨娉ㄥ唽浣跨敤)

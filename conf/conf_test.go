@@ -27,6 +27,9 @@ func TestApiConfigAgentControlRequiresExplicitOptIn(t *testing.T) {
 	if legacy.AgentControlEnabled {
 		t.Fatal("legacy config without AgentControlEnabled unexpectedly enabled the control stream")
 	}
+	if legacy.PluginSupervisorEnabled {
+		t.Fatal("legacy config without PluginSupervisorEnabled unexpectedly enabled the plugin runtime")
+	}
 
 	var current ApiConfig
 	if err := json.Unmarshal([]byte(`{"AgentControlEnabled":true}`), &current); err != nil {
@@ -37,6 +40,9 @@ func TestApiConfigAgentControlRequiresExplicitOptIn(t *testing.T) {
 	}
 	if current.AgentControlAllowInsecure {
 		t.Fatal("AgentControlAllowInsecure unexpectedly defaults to true")
+	}
+	if current.PluginSupervisorEnabled {
+		t.Fatal("AgentControlEnabled must not implicitly enable the plugin Supervisor")
 	}
 
 	var insecure ApiConfig

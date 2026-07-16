@@ -19,7 +19,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func newAgentControlClient(apiConfig *conf.ApiConfig, controller *Controller, core vCore.Core) (*agentapi.Client, error) {
+func newAgentControlClient(apiConfig *conf.ApiConfig, controller *Controller, core vCore.Core, pluginSupervisorEnabled bool) (*agentapi.Client, error) {
 	if apiConfig == nil || controller == nil {
 		return nil, fmt.Errorf("agent control node configuration is missing")
 	}
@@ -43,7 +43,7 @@ func newAgentControlClient(apiConfig *conf.ApiConfig, controller *Controller, co
 		ServerName:   serverName,
 		AgentVersion: panel.Version,
 		InstanceID:   fmt.Sprintf("%s-%d-%d", hostname, os.Getpid(), nodeID),
-		Capabilities: agentCapabilities(core),
+		Capabilities: agentCapabilities(core, pluginSupervisorEnabled),
 		Labels: map[string]string{
 			"core":      core.Type(),
 			"node_type": apiConfig.NodeType,
@@ -140,9 +140,10 @@ func agentControlTargetHost(target string) string {
 	return strings.Trim(target, "[]")
 }
 
-func agentCapabilities(core vCore.Core) []*agentv1pb.Capability {
+func agentCapabilities(core vCore.Core, pluginSupervisorEnabled bool) []*agentv1pb.Capability {
 	capabilities := []*agentv1pb.Capability{
 		{Name: "agent.control", Version: "v1"},
+		{Name: "operation.cancel", Version: "v1"},
 		{Name: "agent.ping", Version: "v1"},
 		{Name: "node.reload", Version: "v1"},
 		{Name: "users.reload", Version: "v1"},
@@ -153,6 +154,11 @@ func agentCapabilities(core vCore.Core) []*agentv1pb.Capability {
 			Name:    "proxy.protocol." + strings.ToLower(protocol),
 			Version: "v1",
 		})
+	}
+	if pluginSupervisorEnabled {
+		for _, operation := range []string{"plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health"} {
+			capabilities = append(capabilities, &agentv1pb.Capability{Name: operation, Version: "v1"})
+		}
 	}
 	return capabilities
 }
@@ -168,6 +174,15 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 	}
 
 	switch operation.Kind {
+	case "plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health":
+		if c.pluginSupervisor == nil {
+			return nil, fmt.Errorf("plugin supervisor is not enabled")
+		}
+		envelope, err := agentapi.DecodeOperationEnvelopeContext(ctx, operation)
+		if err != nil {
+			return nil, err
+		}
+		return c.pluginSupervisor.Handle(ctx, operation.Kind, envelope)
 	case "agent.ping":
 		return json.Marshal(map[string]any{
 			"node_id": c.apiClient.GetNodeID(),

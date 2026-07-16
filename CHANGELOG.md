@@ -4,6 +4,13 @@
 
 ### Added
 
+- Added the opt-in official plugin Supervisor with signed ZIP/tar/tar.gz Agent
+  entrypoint extraction, immutable manifest/artifact verification, persisted
+  lifecycle journal replay, Unix gRPC health checks, and the executable
+  `machine-telemetry` reference package.
+- Added `operation.cancel:v1` handling for running, queued, repeated, unknown,
+  and session-teardown cases, plus unexpected plugin-process exit observation.
+
 - Added a tag-pinned release installation guide and legacy migration runbook for fresh installs, same-fork updates, upstream config mapping, WireGuard canaries, rollback, and operator evidence.
 - Hardened the Linux release installer with ZIP SHA-256 verification, exact-tag management script retrieval, previous-binary backups, and automatic binary restoration when restart fails; it continues to install from GitHub Release assets without cloning or local builds.
 - Added initial P0 WireGuard runtime support: REST/gRPC config parsing, runtime peer fields, Linux `ip`/`wg` interface application, peer validation, and `wg show <iface> transfer` traffic delta parsing.
@@ -15,6 +22,14 @@
 - Made the WireGuard exit role relay-only: it no longer creates a local WireGuard interface, receives peer credentials, or reports user-peer counters.
 - Prevented unchanged gRPC node-config responses from repeatedly rebuilding the WireGuard runtime.
 - Added secure WSS relay configuration: entry nodes require SNI/certificate verification, exit nodes require certificate/private-key paths, and the RC/tag namespace acceptance matrix verifies both QUIC and WSS routes.
+
+### Fixed
+
+- Made enabled plugin configuration restart and health-check the real process,
+  restore the previous config/process on failure, and fail closed when recovery
+  cannot be completed.
+- Treated a process that exits after forced kill as successfully stopped instead
+  of returning the already-expired graceful-shutdown context error.
 
 ### Known Gaps
 

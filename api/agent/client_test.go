@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type controlStreamResult struct {
@@ -46,12 +47,115 @@ func (s *recordingAgentClientStream) Recv() (*agentv1pb.ControlToAgent, error) {
 	return nil, io.EOF
 }
 
+func (s *recordingAgentClientStream) messages() []*agentv1pb.AgentToControl {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	messages := make([]*agentv1pb.AgentToControl, 0, len(s.sent))
+	for _, message := range s.sent {
+		messages = append(messages, proto.Clone(message).(*agentv1pb.AgentToControl))
+	}
+	return messages
+}
+
 type testAgentControlServer struct {
 	agentv1pb.UnimplementedAgentControlServiceServer
 	nodeID    uint32
 	apiKey    string
 	operation *agentv1pb.DesiredOperation
 	result    chan controlStreamResult
+}
+
+type cancellationControlResult struct {
+	acks      []*agentv1pb.OperationAck
+	applying  *agentv1pb.ObservedState
+	terminals []*agentv1pb.ObservedState
+}
+
+type cancellationAgentControlServer struct {
+	agentv1pb.UnimplementedAgentControlServiceServer
+	nodeID    uint32
+	apiKey    string
+	operation *agentv1pb.DesiredOperation
+	result    chan cancellationControlResult
+}
+
+func (s *cancellationAgentControlServer) ControlStream(stream agentv1pb.AgentControlService_ControlStreamServer) error {
+	md, ok := metadata.FromIncomingContext(stream.Context())
+	if !ok || len(md.Get("x-api-key")) == 0 || md.Get("x-api-key")[0] != s.apiKey {
+		return status.Error(codes.Unauthenticated, "missing agent API key")
+	}
+	if len(md.Get("x-node-id")) == 0 || md.Get("x-node-id")[0] != strconv.FormatUint(uint64(s.nodeID), 10) {
+		return status.Error(codes.Unauthenticated, "missing agent node ID")
+	}
+	first, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	if first.GetHello() == nil {
+		return status.Error(codes.FailedPrecondition, "hello is required")
+	}
+	if err := stream.Send(&agentv1pb.ControlToAgent{
+		RequestId: first.RequestId, NodeId: s.nodeID, SentAtUnixMs: time.Now().UnixMilli(),
+		Payload: &agentv1pb.ControlToAgent_HelloAck{HelloAck: &agentv1pb.HelloAck{
+			SessionId: "cancellation-session", HeartbeatIntervalSeconds: 30,
+		}},
+	}); err != nil {
+		return err
+	}
+	if err := s.sendDesired(stream, "target-operation", s.operation); err != nil {
+		return err
+	}
+
+	result := cancellationControlResult{}
+	cancelSent := false
+	repeatSent := false
+	for {
+		message, err := stream.Recv()
+		if err != nil {
+			return err
+		}
+		if ack := message.GetOperationAck(); ack != nil && ack.OperationId == s.operation.OperationId {
+			result.acks = append(result.acks, proto.Clone(ack).(*agentv1pb.OperationAck))
+		}
+		if observed := message.GetObservedState(); observed != nil && observed.OperationId == s.operation.OperationId {
+			switch observed.Phase {
+			case agentv1pb.ObservedPhase_OBSERVED_PHASE_APPLYING:
+				result.applying = proto.Clone(observed).(*agentv1pb.ObservedState)
+				if !cancelSent {
+					cancelSent = true
+					if err := s.sendDesired(stream, "cancel-operation", &agentv1pb.DesiredOperation{
+						OperationId: s.operation.OperationId, Kind: operationCancelKind, Revision: s.operation.Revision,
+					}); err != nil {
+						return err
+					}
+				}
+			case agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED,
+				agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED,
+				agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED:
+				result.terminals = append(result.terminals, proto.Clone(observed).(*agentv1pb.ObservedState))
+				if !repeatSent {
+					repeatSent = true
+					if err := s.sendDesired(stream, "repeat-cancel-operation", &agentv1pb.DesiredOperation{
+						OperationId: s.operation.OperationId, Kind: operationCancelKind, Revision: s.operation.Revision,
+					}); err != nil {
+						return err
+					}
+				}
+			}
+		}
+		if result.applying != nil && len(result.terminals) >= 2 && repeatSent && len(result.acks) >= 3 {
+			s.result <- result
+			<-stream.Context().Done()
+			return stream.Context().Err()
+		}
+	}
+}
+
+func (s *cancellationAgentControlServer) sendDesired(stream agentv1pb.AgentControlService_ControlStreamServer, requestID string, operation *agentv1pb.DesiredOperation) error {
+	return stream.Send(&agentv1pb.ControlToAgent{
+		RequestId: requestID, NodeId: s.nodeID, Revision: operation.Revision, SentAtUnixMs: time.Now().UnixMilli(),
+		Payload: &agentv1pb.ControlToAgent_DesiredOperation{DesiredOperation: proto.Clone(operation).(*agentv1pb.DesiredOperation)},
+	})
 }
 
 func (s *testAgentControlServer) ControlStream(stream agentv1pb.AgentControlService_ControlStreamServer) error {
@@ -142,6 +246,7 @@ func TestClientControlStreamOperationLifecycle(t *testing.T) {
 	go func() { serverErr <- server.Serve(listener) }()
 
 	handled := make(chan *agentv1pb.DesiredOperation, 1)
+	handledSession := make(chan string, 1)
 	client, err := NewClient(Config{
 		Target:       listener.Addr().String(),
 		NodeID:       42,
@@ -149,7 +254,9 @@ func TestClientControlStreamOperationLifecycle(t *testing.T) {
 		AgentVersion: "test-agent",
 		InstanceID:   "instance-1",
 		Capabilities: []*agentv1pb.Capability{{Name: "agent.ping", Version: "v1"}},
-		Handler: OperationHandlerFunc(func(_ context.Context, desired *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+		Handler: OperationHandlerFunc(func(ctx context.Context, desired *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			sessionID, _ := operationSessionFromContext(ctx)
+			handledSession <- sessionID
 			handled <- desired
 			return json.RawMessage(`{"applied":true}`), nil
 		}),
@@ -174,6 +281,7 @@ func TestClientControlStreamOperationLifecycle(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("desired operation was not handled")
 	}
+	assert.Equal(t, "test-session", <-handledSession)
 
 	select {
 	case result := <-resultCh:
@@ -201,6 +309,64 @@ func TestClientControlStreamOperationLifecycle(t *testing.T) {
 	}
 }
 
+func TestClientControlStreamCancellationLifecycle(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	server := grpc.NewServer()
+	resultCh := make(chan cancellationControlResult, 1)
+	operation := &agentv1pb.DesiredOperation{OperationId: "stream-cancel", Kind: "agent.ping", Revision: 12}
+	agentv1pb.RegisterAgentControlServiceServer(server, &cancellationAgentControlServer{
+		nodeID: 42, apiKey: "node-api-key", operation: operation, result: resultCh,
+	})
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- server.Serve(listener) }()
+
+	handlerCancelled := make(chan struct{})
+	client, err := NewClient(Config{
+		Target: listener.Addr().String(), NodeID: 42, APIKey: "node-api-key", AgentVersion: "test-agent",
+		Capabilities: []*agentv1pb.Capability{{Name: "agent.ping", Version: "v1"}, {Name: operationCancelKind, Version: "v1"}},
+		Handler: OperationHandlerFunc(func(ctx context.Context, _ *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			<-ctx.Done()
+			close(handlerCancelled)
+			return nil, ctx.Err()
+		}),
+		ReconnectMin: 100 * time.Millisecond,
+		ReconnectMax: time.Second,
+	})
+	require.NoError(t, err)
+	require.NoError(t, client.Start())
+
+	select {
+	case result := <-resultCh:
+		require.Len(t, result.acks, 3, "target ACK plus initial and repeated cancellation ACKs")
+		for _, ack := range result.acks {
+			assert.True(t, ack.Accepted)
+			assert.Equal(t, operation.OperationId, ack.OperationId)
+			assert.Equal(t, operation.Revision, ack.Revision)
+		}
+		require.NotNil(t, result.applying)
+		require.Len(t, result.terminals, 2)
+		assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, result.terminals[0].Phase)
+		assert.Equal(t, operationCancelledText, result.terminals[0].Message)
+		assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, result.terminals[1].Phase)
+		assert.Equal(t, operationNotRunningText, result.terminals[1].Message)
+	case <-time.After(5 * time.Second):
+		t.Fatal("operation cancellation lifecycle was not reported")
+	}
+	select {
+	case <-handlerCancelled:
+	default:
+		t.Fatal("operation handler context was not cancelled")
+	}
+
+	require.NoError(t, client.Close())
+	server.GracefulStop()
+	err = <-serverErr
+	if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+		require.NoError(t, err)
+	}
+}
+
 func TestExecuteOperationSupersedesRevisionThatBecameStaleInQueue(t *testing.T) {
 	var handled atomic.Int32
 	client, err := NewClient(Config{
@@ -218,7 +384,7 @@ func TestExecuteOperationSupersedesRevisionThatBecameStaleInQueue(t *testing.T) 
 	client.observedRevision.Store(10)
 	stream := &recordingAgentClientStream{}
 
-	client.executeOperation(context.Background(), stream, "current-session", &agentv1pb.DesiredOperation{
+	client.executeOperation(context.Background(), stream, "current-session", newSessionOperationState(), &agentv1pb.DesiredOperation{
 		OperationId: "stale-in-queue",
 		Kind:        "agent.ping",
 		Revision:    9,
@@ -236,6 +402,195 @@ func TestExecuteOperationSupersedesRevisionThatBecameStaleInQueue(t *testing.T) 
 	completed, ok := client.completedOperation("stale-in-queue")
 	require.True(t, ok)
 	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, completed.Phase)
+}
+
+func TestRunningOperationCancellationCancelsHandlerAndSupersedes(t *testing.T) {
+	started := make(chan struct{})
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Handler: OperationHandlerFunc(func(ctx context.Context, _ *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		}),
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	operations := newSessionOperationState()
+	target := &agentv1pb.DesiredOperation{OperationId: "cancel-running", Kind: "agent.ping", Revision: 7}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		client.executeOperation(context.Background(), stream, "session-1", operations, target)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start")
+	}
+	require.NoError(t, client.cancelOperation(stream, "session-1", operations, &agentv1pb.DesiredOperation{
+		OperationId: target.OperationId, Kind: operationCancelKind, Revision: target.Revision,
+	}))
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("running handler was not cancelled")
+	}
+
+	messages := stream.messages()
+	require.Len(t, messages, 3)
+	var ack *agentv1pb.OperationAck
+	var applying, terminal *agentv1pb.ObservedState
+	for _, message := range messages {
+		if message.GetOperationAck() != nil {
+			ack = message.GetOperationAck()
+			continue
+		}
+		observed := message.GetObservedState()
+		if observed != nil && observed.Phase == agentv1pb.ObservedPhase_OBSERVED_PHASE_APPLYING {
+			applying = observed
+		} else if observed != nil {
+			terminal = observed
+		}
+	}
+	require.NotNil(t, ack)
+	assert.True(t, ack.Accepted)
+	require.NotNil(t, applying)
+	require.NotNil(t, terminal)
+	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, terminal.Phase)
+	assert.Equal(t, operationCancelledText, terminal.Message)
+}
+
+func TestQueuedOperationCancellationSkipsHandler(t *testing.T) {
+	var handled atomic.Int32
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			handled.Add(1)
+			return nil, nil
+		}),
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	operations := newSessionOperationState()
+	queue := make(chan *agentv1pb.DesiredOperation, 1)
+	target := &agentv1pb.DesiredOperation{OperationId: "cancel-queued", Kind: "agent.ping", Revision: 8}
+	require.NoError(t, client.acceptOperation(stream, "session-1", queue, operations, target))
+	queued := <-queue
+	require.NoError(t, client.cancelOperation(stream, "session-1", operations, &agentv1pb.DesiredOperation{
+		OperationId: target.OperationId, Kind: operationCancelKind, Revision: target.Revision,
+	}))
+	client.executeOperation(context.Background(), stream, "session-1", operations, queued)
+
+	assert.Zero(t, handled.Load())
+	messages := stream.messages()
+	require.Len(t, messages, 3)
+	assert.True(t, messages[0].GetOperationAck().Accepted)
+	assert.True(t, messages[1].GetOperationAck().Accepted)
+	terminal := messages[2].GetObservedState()
+	require.NotNil(t, terminal)
+	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, terminal.Phase)
+	assert.Equal(t, operationCancelledText, terminal.Message)
+}
+
+func TestLateRepeatedCancellationAcknowledgesAndReplaysTerminal(t *testing.T) {
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			return json.RawMessage(`{"done":true}`), nil
+		}),
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	operations := newSessionOperationState()
+	target := &agentv1pb.DesiredOperation{OperationId: "cancel-late", Kind: "agent.ping", Revision: 9}
+	client.executeOperation(context.Background(), stream, "session-1", operations, target)
+	for range 2 {
+		require.NoError(t, client.cancelOperation(stream, "session-1", operations, &agentv1pb.DesiredOperation{
+			OperationId: target.OperationId, Kind: operationCancelKind, Revision: target.Revision,
+		}))
+	}
+
+	messages := stream.messages()
+	require.Len(t, messages, 6)
+	require.NotNil(t, messages[0].GetObservedState())
+	terminal := messages[1].GetObservedState()
+	require.NotNil(t, terminal)
+	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED, terminal.Phase)
+	for index := 2; index < len(messages); index += 2 {
+		ack := messages[index].GetOperationAck()
+		require.NotNil(t, ack)
+		assert.True(t, ack.Accepted)
+		replayed := messages[index+1].GetObservedState()
+		require.NotNil(t, replayed)
+		assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, replayed.Phase)
+		assert.Equal(t, operationNotRunningText, replayed.Message)
+	}
+}
+
+func TestUnknownOperationCancellationCompletesAndSuppressesLaterReplay(t *testing.T) {
+	var handled atomic.Int32
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			handled.Add(1)
+			return nil, nil
+		}),
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	operations := newSessionOperationState()
+	cancelRequest := &agentv1pb.DesiredOperation{OperationId: "cancel-after-control-restart", Kind: operationCancelKind, Revision: 15}
+	require.NoError(t, client.cancelOperation(stream, "session-2", operations, cancelRequest))
+
+	messages := stream.messages()
+	require.Len(t, messages, 2)
+	require.True(t, messages[0].GetOperationAck().Accepted)
+	terminal := messages[1].GetObservedState()
+	require.NotNil(t, terminal)
+	require.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, terminal.Phase)
+	require.Equal(t, operationNotRunningText, terminal.Message)
+
+	queue := make(chan *agentv1pb.DesiredOperation, 1)
+	laterReplay := &agentv1pb.DesiredOperation{OperationId: cancelRequest.OperationId, Kind: "plugin.enable", Revision: cancelRequest.Revision}
+	require.NoError(t, client.acceptOperation(stream, "session-2", queue, operations, laterReplay))
+	require.Empty(t, queue)
+	require.Zero(t, handled.Load())
+	messages = stream.messages()
+	require.Len(t, messages, 4)
+	replayed := messages[3].GetObservedState()
+	require.NotNil(t, replayed)
+	require.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, replayed.Phase)
+	require.Equal(t, operationNotRunningText, replayed.Message)
+}
+
+func TestSessionOperationStateCloseCancelsAndClearsSessionState(t *testing.T) {
+	operations := newSessionOperationState()
+	running := &agentv1pb.DesiredOperation{OperationId: "session-running", Revision: 1}
+	require.False(t, operations.queue(running))
+	runningCtx, cancel, alreadyCancelled := operations.begin(context.Background(), running)
+	defer cancel()
+	require.False(t, alreadyCancelled)
+	queued := &agentv1pb.DesiredOperation{OperationId: "session-queued", Revision: 2}
+	require.False(t, operations.queue(queued))
+	accepted, notRunning, reason := operations.requestCancel(queued.OperationId, queued.Revision)
+	require.True(t, accepted)
+	require.False(t, notRunning)
+	require.Empty(t, reason)
+
+	operations.close()
+	select {
+	case <-runningCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("session teardown did not cancel running operation")
+	}
+	operations.mu.Lock()
+	defer operations.mu.Unlock()
+	require.True(t, operations.closed)
+	require.Empty(t, operations.running)
+	require.Empty(t, operations.queued)
+	require.Empty(t, operations.cancelled)
 }
 
 func TestClientRetriesFailedDial(t *testing.T) {

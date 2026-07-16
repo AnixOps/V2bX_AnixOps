@@ -34,6 +34,9 @@ const (
 	defaultHandshakeTimeout = 10 * time.Second
 	operationQueueSize      = 32
 	completedCacheSize      = 256
+	operationCancelKind     = "operation.cancel"
+	operationCancelledText  = "operation cancelled"
+	operationNotRunningText = "operation cancelled/not running"
 )
 
 type OperationHandler interface {
@@ -225,6 +228,179 @@ type receiveResult struct {
 	err     error
 }
 
+// sessionOperationState is deliberately scoped to one ControlStream. A
+// cancellation from a disconnected session must never cancel work accepted by
+// a later session, even when the operation ID is replayed.
+type sessionOperationState struct {
+	mu        sync.Mutex
+	running   map[string]*runningOperation
+	queued    map[string]uint64
+	cancelled map[string]uint64
+	closed    bool
+}
+
+type runningOperation struct {
+	revision  uint64
+	cancel    context.CancelFunc
+	cancelled bool
+}
+
+func newSessionOperationState() *sessionOperationState {
+	return &sessionOperationState{
+		running:   make(map[string]*runningOperation),
+		queued:    make(map[string]uint64),
+		cancelled: make(map[string]uint64),
+	}
+}
+
+// queue returns true when a cancellation was received before the target was
+// admitted to the worker queue. The caller emits that operation's terminal
+// state immediately instead of invoking its handler.
+func (s *sessionOperationState) queue(operation *agentv1pb.DesiredOperation) bool {
+	if s == nil || operation == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return true
+	}
+	if revision, ok := s.cancelled[operation.OperationId]; ok && revision == operation.Revision {
+		return true
+	}
+	s.queued[operation.OperationId] = operation.Revision
+	return false
+}
+
+func (s *sessionOperationState) unqueue(operation *agentv1pb.DesiredOperation) {
+	if s == nil || operation == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if revision, ok := s.queued[operation.OperationId]; ok && revision == operation.Revision {
+		delete(s.queued, operation.OperationId)
+	}
+}
+
+// begin atomically transitions a queued operation to running. Registering the
+// cancel function while holding the lock closes the race with operation.cancel.
+func (s *sessionOperationState) begin(parent context.Context, operation *agentv1pb.DesiredOperation) (context.Context, context.CancelFunc, bool) {
+	if s == nil || operation == nil {
+		return parent, func() {}, true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return parent, func() {}, true
+	}
+	if revision, ok := s.queued[operation.OperationId]; ok && revision == operation.Revision {
+		delete(s.queued, operation.OperationId)
+	}
+	if revision, ok := s.cancelled[operation.OperationId]; ok && revision == operation.Revision {
+		return parent, func() {}, true
+	}
+	operationCtx, cancel := context.WithCancel(parent)
+	s.running[operation.OperationId] = &runningOperation{revision: operation.Revision, cancel: cancel}
+	return operationCtx, cancel, false
+}
+
+// requestCancel records a cancellation for an accepted queued operation, or
+// invokes the live handler context's cancel function after releasing the lock.
+// An unknown target is returned to the caller for immediate terminal reporting.
+func (s *sessionOperationState) requestCancel(operationID string, revision uint64) (accepted, notRunning bool, reason string) {
+	if s == nil {
+		return false, false, "operation cancellation state is unavailable"
+	}
+	var cancel context.CancelFunc
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return false, false, "agent control session is closing"
+	}
+	if running, ok := s.running[operationID]; ok {
+		if running.revision != revision {
+			s.mu.Unlock()
+			return false, false, fmt.Sprintf("operation revision is %d", running.revision)
+		}
+		running.cancelled = true
+		cancel = running.cancel
+		s.mu.Unlock()
+		cancel()
+		return true, false, ""
+	}
+	if queuedRevision, ok := s.queued[operationID]; ok {
+		if queuedRevision != revision {
+			s.mu.Unlock()
+			return false, false, fmt.Sprintf("operation revision is %d", queuedRevision)
+		}
+		s.cancelled[operationID] = revision
+		s.mu.Unlock()
+		return true, false, ""
+	}
+	if cancelledRevision, ok := s.cancelled[operationID]; ok {
+		if cancelledRevision != revision {
+			s.mu.Unlock()
+			return false, false, fmt.Sprintf("operation cancellation already targets revision %d", cancelledRevision)
+		}
+		s.mu.Unlock()
+		return true, false, ""
+	}
+	s.mu.Unlock()
+	return true, true, ""
+}
+
+func (s *sessionOperationState) finishCancellation(operation *agentv1pb.DesiredOperation) {
+	if s == nil || operation == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if revision, ok := s.queued[operation.OperationId]; ok && revision == operation.Revision {
+		delete(s.queued, operation.OperationId)
+	}
+	if revision, ok := s.cancelled[operation.OperationId]; ok && revision == operation.Revision {
+		delete(s.cancelled, operation.OperationId)
+	}
+}
+
+func (s *sessionOperationState) finish(operation *agentv1pb.DesiredOperation) bool {
+	if s == nil || operation == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	running, ok := s.running[operation.OperationId]
+	if !ok || running.revision != operation.Revision {
+		return false
+	}
+	delete(s.running, operation.OperationId)
+	return running.cancelled
+}
+
+func (s *sessionOperationState) close() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return
+	}
+	s.closed = true
+	cancels := make([]context.CancelFunc, 0, len(s.running))
+	for _, running := range s.running {
+		cancels = append(cancels, running.cancel)
+	}
+	s.running = make(map[string]*runningOperation)
+	s.queued = make(map[string]uint64)
+	s.cancelled = make(map[string]uint64)
+	s.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
 func (c *Client) runSession() (bool, error) {
 	var connectedAt time.Time
 	dialCtx, dialCancel := context.WithTimeout(c.ctx, c.config.DialTimeout)
@@ -302,12 +478,14 @@ func (c *Client) runSession() (bool, error) {
 	defer heartbeatTicker.Stop()
 
 	operationQueue := make(chan *agentv1pb.DesiredOperation, operationQueueSize)
+	operations := newSessionOperationState()
 	workerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		c.operationWorker(sessionCtx, stream, helloAck.SessionId, operationQueue)
+		c.operationWorker(sessionCtx, stream, helloAck.SessionId, operationQueue, operations)
 	}()
 	defer func() {
+		operations.close()
 		sessionCancel()
 		<-workerDone
 	}()
@@ -335,8 +513,17 @@ func (c *Client) runSession() (bool, error) {
 				}
 				c.storeDesiredRevision(payload.HeartbeatAck.DesiredRevision)
 			case *agentv1pb.ControlToAgent_DesiredOperation:
-				c.storeDesiredRevision(payload.DesiredOperation.Revision)
-				if err := c.acceptOperation(stream, helloAck.SessionId, operationQueue, payload.DesiredOperation); err != nil {
+				operation := payload.DesiredOperation
+				if operation != nil && operation.Kind == operationCancelKind {
+					if err := c.cancelOperation(stream, helloAck.SessionId, operations, operation); err != nil {
+						return c.sessionWasStable(connectedAt), err
+					}
+					continue
+				}
+				if operation != nil {
+					c.storeDesiredRevision(operation.Revision)
+				}
+				if err := c.acceptOperation(stream, helloAck.SessionId, operationQueue, operations, operation); err != nil {
 					return c.sessionWasStable(connectedAt), err
 				}
 			case *agentv1pb.ControlToAgent_HelloAck:
@@ -392,7 +579,7 @@ func receiveControlMessages(ctx context.Context, stream agentv1pb.AgentControlSe
 	}
 }
 
-func (c *Client) acceptOperation(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, queue chan<- *agentv1pb.DesiredOperation, operation *agentv1pb.DesiredOperation) error {
+func (c *Client) acceptOperation(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, queue chan<- *agentv1pb.DesiredOperation, operations *sessionOperationState, operation *agentv1pb.DesiredOperation) error {
 	if operation == nil || operation.OperationId == "" || operation.Kind == "" || operation.Revision == 0 {
 		return c.sendOperationAck(stream, sessionID, operation, false, "invalid desired operation")
 	}
@@ -419,30 +606,69 @@ func (c *Client) acceptOperation(stream agentv1pb.AgentControlService_ControlStr
 	}
 
 	cloned := proto.Clone(operation).(*agentv1pb.DesiredOperation)
+	if operations.queue(cloned) {
+		if err := c.sendOperationAck(stream, sessionID, operation, true, ""); err != nil {
+			return err
+		}
+		err := c.completeCancelledOperation(stream, sessionID, cloned, operationCancelledText)
+		operations.finishCancellation(cloned)
+		return err
+	}
 	select {
 	case queue <- cloned:
 		return c.sendOperationAck(stream, sessionID, operation, true, "")
 	default:
+		operations.unqueue(cloned)
 		return c.sendOperationAck(stream, sessionID, operation, false, "operation queue is full")
 	}
 }
 
-func (c *Client) operationWorker(ctx context.Context, stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, queue <-chan *agentv1pb.DesiredOperation) {
+func (c *Client) cancelOperation(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, operations *sessionOperationState, operation *agentv1pb.DesiredOperation) error {
+	if operation == nil || operation.OperationId == "" || operation.Revision == 0 {
+		return c.sendOperationAck(stream, sessionID, operation, false, "invalid operation cancellation")
+	}
+	if completed, ok := c.completedOperation(operation.OperationId); ok {
+		if completed.Revision != operation.Revision {
+			return c.sendOperationAck(stream, sessionID, operation, false, fmt.Sprintf("operation_id was already completed at revision %d", completed.Revision))
+		}
+		if err := c.sendOperationAck(stream, sessionID, operation, true, ""); err != nil {
+			return err
+		}
+		// Control may have restarted after the previous terminal report. Send
+		// an idempotent terminal again so cancel_requested cannot remain stuck.
+		return c.completeCancelledOperation(stream, sessionID, operation, operationNotRunningText)
+	}
+	accepted, notRunning, reason := operations.requestCancel(operation.OperationId, operation.Revision)
+	if err := c.sendOperationAck(stream, sessionID, operation, accepted, reason); err != nil || !accepted || !notRunning {
+		return err
+	}
+	return c.completeCancelledOperation(stream, sessionID, operation, operationNotRunningText)
+}
+
+func (c *Client) operationWorker(ctx context.Context, stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, queue <-chan *agentv1pb.DesiredOperation, operations *sessionOperationState) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case operation := <-queue:
-			c.executeOperation(ctx, stream, sessionID, operation)
+			c.executeOperation(ctx, stream, sessionID, operations, operation)
 		}
 	}
 }
 
-func (c *Client) executeOperation(parent context.Context, stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, operation *agentv1pb.DesiredOperation) {
+func (c *Client) executeOperation(parent context.Context, stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, operations *sessionOperationState, operation *agentv1pb.DesiredOperation) {
 	if operation == nil {
 		return
 	}
+	operationCtx, cancel, cancelled := operations.begin(parent, operation)
+	if cancelled {
+		_ = c.completeCancelledOperation(stream, sessionID, operation, operationCancelledText)
+		operations.finishCancellation(operation)
+		return
+	}
+	defer cancel()
 	if operation.Revision <= c.observedRevision.Load() {
+		operations.finish(operation)
 		terminal := &agentv1pb.ObservedState{
 			OperationId:      operation.OperationId,
 			Revision:         operation.Revision,
@@ -462,16 +688,18 @@ func (c *Client) executeOperation(parent context.Context, stream agentv1pb.Agent
 		ObservedAtUnixMs: time.Now().UnixMilli(),
 	}
 	if err := c.sendObserved(stream, sessionID, applying); err != nil {
+		operations.finish(operation)
 		return
 	}
 
-	operationCtx := parent
-	cancel := func() {}
 	if operation.DeadlineUnixMs > 0 {
-		operationCtx, cancel = context.WithDeadline(parent, time.UnixMilli(operation.DeadlineUnixMs))
+		var deadlineCancel context.CancelFunc
+		operationCtx, deadlineCancel = context.WithDeadline(operationCtx, time.UnixMilli(operation.DeadlineUnixMs))
+		defer deadlineCancel()
 	}
-	defer cancel()
+	operationCtx = withOperationSession(operationCtx, sessionID)
 	state, err := c.config.Handler.HandleOperation(operationCtx, proto.Clone(operation).(*agentv1pb.DesiredOperation))
+	wasCancelled := operations.finish(operation)
 
 	terminal := &agentv1pb.ObservedState{
 		OperationId:      operation.OperationId,
@@ -480,13 +708,30 @@ func (c *Client) executeOperation(parent context.Context, stream agentv1pb.Agent
 		StateJson:        append([]byte(nil), state...),
 		ObservedAtUnixMs: time.Now().UnixMilli(),
 	}
-	if err != nil {
+	if wasCancelled {
+		terminal.Phase = agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED
+		terminal.Message = operationCancelledText
+		terminal.StateJson = nil
+	} else if err != nil {
 		terminal.Phase = agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED
 		terminal.Message = err.Error()
 	}
 	c.storeObservedRevision(operation.Revision)
 	c.rememberCompleted(terminal)
 	_ = c.sendObserved(stream, sessionID, terminal)
+}
+
+func (c *Client) completeCancelledOperation(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, operation *agentv1pb.DesiredOperation, message string) error {
+	terminal := &agentv1pb.ObservedState{
+		OperationId:      operation.OperationId,
+		Revision:         operation.Revision,
+		Phase:            agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED,
+		Message:          message,
+		ObservedAtUnixMs: time.Now().UnixMilli(),
+	}
+	c.storeObservedRevision(operation.Revision)
+	c.rememberCompleted(terminal)
+	return c.sendObserved(stream, sessionID, terminal)
 }
 
 func (c *Client) sendHeartbeat(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, startedAt time.Time) error {

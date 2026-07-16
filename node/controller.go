@@ -12,6 +12,7 @@ import (
 	"github.com/AnixOps/anix-agent/v3/conf"
 	vCore "github.com/AnixOps/anix-agent/v3/core"
 	"github.com/AnixOps/anix-agent/v3/limiter"
+	"github.com/AnixOps/anix-agent/v3/plugin"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -32,7 +33,12 @@ type Controller struct {
 	syncManager               *SyncManager
 	logHook                   *RemoteLogHook
 	reconcileMu               sync.Mutex
+	pluginSupervisor          *plugin.Supervisor
 	*conf.Options
+}
+
+func (c *Controller) SetPluginSupervisor(supervisor *plugin.Supervisor) {
+	c.pluginSupervisor = supervisor
 }
 
 // NewController return a Node controller with default parameters.

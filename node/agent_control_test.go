@@ -1,9 +1,14 @@
 package node
 
 import (
+	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"strings"
 	"testing"
 
+	agentv1pb "github.com/AnixOps/anix-agent/v3/api/grpc/agent/v1"
 	"github.com/AnixOps/anix-agent/v3/conf"
 )
 
@@ -102,5 +107,68 @@ func TestIsLoopbackAgentControlTarget(t *testing.T) {
 	}
 	if isLoopbackAgentControlTarget("control.example.com:50051") {
 		t.Fatal("remote DNS target was treated as loopback")
+	}
+}
+
+func TestAgentCapabilitiesAdvertisePluginOperationsOnlyWhenEnabled(t *testing.T) {
+	legacy := agentCapabilities(&errorTestCore{}, false)
+	current := agentCapabilities(&errorTestCore{}, true)
+	contains := func(capabilities []*agentv1pb.Capability, name string) bool {
+		for _, capability := range capabilities {
+			if capability.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	if contains(legacy, "plugin.enable") {
+		t.Fatal("legacy Agent advertised plugin.enable")
+	}
+	for _, capabilities := range [][]*agentv1pb.Capability{legacy, current} {
+		if !contains(capabilities, "operation.cancel") {
+			t.Fatal("Agent did not advertise operation.cancel")
+		}
+		for _, capability := range capabilities {
+			if capability.Name == "operation.cancel" && capability.Version != "v1" {
+				t.Fatalf("operation.cancel version = %q, want v1", capability.Version)
+			}
+		}
+	}
+	for _, name := range []string{"plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health"} {
+		if !contains(current, name) {
+			t.Fatalf("plugin-enabled Agent did not advertise %s", name)
+		}
+	}
+}
+
+func TestNewPluginSupervisorRequiresOneConsistentOptIn(t *testing.T) {
+	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := base64.StdEncoding.EncodeToString(publicKey)
+	nodes := []conf.NodeConfig{{ApiConfig: conf.ApiConfig{
+		PluginSupervisorEnabled: true,
+		PluginRoot:              t.TempDir(),
+		PluginOfficialPublicKey: key,
+	}}}
+	supervisor, err := newPluginSupervisor(nodes)
+	if err != nil {
+		t.Fatalf("newPluginSupervisor() error = %v", err)
+	}
+	if supervisor == nil {
+		t.Fatal("newPluginSupervisor() returned nil for explicit opt-in")
+	}
+	if err := supervisor.Close(context.Background()); err != nil {
+		t.Fatalf("close plugin supervisor: %v", err)
+	}
+
+	nodes = append(nodes, conf.NodeConfig{ApiConfig: conf.ApiConfig{
+		PluginSupervisorEnabled: true,
+		PluginRoot:              t.TempDir(),
+		PluginOfficialPublicKey: key,
+	}})
+	if _, err := newPluginSupervisor(nodes); err == nil || !strings.Contains(err.Error(), "same root") {
+		t.Fatalf("newPluginSupervisor() inconsistent config error = %v", err)
 	}
 }

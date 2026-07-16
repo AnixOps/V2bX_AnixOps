@@ -1,0 +1,380 @@
+{
+  "api_version": "anixops.plugin.negative/v1",
+  "cases": [
+    {
+      "name": "unsupported-api-version",
+      "want_error": "API version",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v2",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "unsafe-version",
+      "want_error": "safe path",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "../1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "duplicate-target",
+      "want_error": "duplicate",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "invalid-architecture",
+      "want_error": "invalid",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["linux/../amd64"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "duplicate-architecture",
+      "want_error": "duplicate",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any", "any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "self-dependency",
+      "want_error": "depend on itself",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dependencies": ["gost-mesh"]
+      }
+    },
+    {
+      "name": "duplicate-dependency",
+      "want_error": "duplicate",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dependencies": ["wireguard", "wireguard"]
+      }
+    },
+    {
+      "name": "dependency-conflict-overlap",
+      "want_error": "both a dependency",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "dependencies": ["wireguard"],
+        "conflicts": ["wireguard"]
+      }
+    },
+    {
+      "name": "entrypoint-traversal",
+      "want_error": "relative path",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "entrypoints": {
+          "health": "../bin/health"
+        }
+      }
+    },
+    {
+      "name": "invalid-frontend-sha256",
+      "want_error": "frontend_sha256",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "frontend_sha256": "not-a-hash"
+      }
+    },
+    {
+      "name": "negative-migration-version",
+      "want_error": "migration_version",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "migration_version": -1
+      }
+    },
+    {
+      "name": "array-config-schema",
+      "want_error": "config_schema",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "config_schema": []
+      }
+    },
+    {
+      "name": "unknown-field",
+      "want_error": "unexpected",
+      "manifest": {
+        "id": "gost-mesh",
+        "name": "GOST Mesh",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "unexpected": true
+      }
+    },
+    {
+      "name": "control-route-missing-api-permission",
+      "want_error": "machine-telemetry.api",
+      "manifest": {
+        "id": "machine-telemetry",
+        "name": "Machine Telemetry",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "permissions": ["machine-telemetry.view"],
+        "control_routes": ["/api/v3/plugins/machine-telemetry/status"]
+      }
+    },
+    {
+      "name": "control-route-outside-namespace",
+      "want_error": "outside",
+      "manifest": {
+        "id": "machine-telemetry",
+        "name": "Machine Telemetry",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "permissions": ["machine-telemetry.api"],
+        "control_routes": ["/api/v3/plugins/wireguard/status"]
+      }
+    },
+    {
+      "name": "permission-outside-namespace",
+      "want_error": "outside the plugin namespace",
+      "manifest": {
+        "id": "machine-telemetry",
+        "name": "Machine Telemetry",
+        "version": "1.0.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "permissions": ["admin.users"]
+      }
+    },
+    {
+      "name": "webui-remote-bundle",
+      "want_error": "bundle",
+      "manifest": {
+        "id": "machine-telemetry",
+        "name": "Machine Telemetry",
+        "version": "0.1.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "permissions": ["machine-telemetry.view"],
+        "config_schema": {
+          "type": "object"
+        },
+        "frontend_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "webui": {
+          "bundle": {
+            "path": "https://evil.example/plugin.mjs",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "permissions": ["machine-telemetry.view"],
+          "menus": [
+            {
+              "id": "machine-telemetry.main",
+              "parent": "services",
+              "label": "Machine Telemetry",
+              "icon": "activity",
+              "route": "/admin/extensions/machine-telemetry",
+              "permission": "machine-telemetry.view",
+              "order": 10
+            }
+          ],
+          "routes": [
+            {
+              "id": "machine-telemetry.main",
+              "path": "/admin/extensions/machine-telemetry",
+              "export": "default",
+              "permission": "machine-telemetry.view"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "webui-route-outside-namespace",
+      "want_error": "outside",
+      "manifest": {
+        "id": "machine-telemetry",
+        "name": "Machine Telemetry",
+        "version": "0.1.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "permissions": ["machine-telemetry.view"],
+        "config_schema": {
+          "type": "object"
+        },
+        "frontend_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "webui": {
+          "bundle": {
+            "path": "webui/index.mjs",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "permissions": ["machine-telemetry.view"],
+          "menus": [
+            {
+              "id": "machine-telemetry.main",
+              "parent": "services",
+              "label": "Machine Telemetry",
+              "icon": "activity",
+              "route": "/admin/users",
+              "permission": "machine-telemetry.view",
+              "order": 10
+            }
+          ],
+          "routes": [
+            {
+              "id": "machine-telemetry.main",
+              "path": "/admin/users",
+              "export": "default",
+              "permission": "machine-telemetry.view"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "webui-undeclared-permission",
+      "want_error": "not declared",
+      "manifest": {
+        "id": "machine-telemetry",
+        "name": "Machine Telemetry",
+        "version": "0.1.0",
+        "api_version": "v1",
+        "publisher": "AnixOps",
+        "targets": ["control", "agent"],
+        "architectures": ["any"],
+        "artifact_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "permissions": ["machine-telemetry.view"],
+        "config_schema": {
+          "type": "object"
+        },
+        "frontend_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "webui": {
+          "bundle": {
+            "path": "webui/index.mjs",
+            "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          },
+          "permissions": ["machine-telemetry.admin"],
+          "menus": [
+            {
+              "id": "machine-telemetry.main",
+              "parent": "services",
+              "label": "Machine Telemetry",
+              "icon": "activity",
+              "route": "/admin/extensions/machine-telemetry",
+              "permission": "machine-telemetry.admin",
+              "order": 10
+            }
+          ],
+          "routes": [
+            {
+              "id": "machine-telemetry.main",
+              "path": "/admin/extensions/machine-telemetry",
+              "export": "default",
+              "permission": "machine-telemetry.admin"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
