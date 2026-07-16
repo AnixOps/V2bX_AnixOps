@@ -63,6 +63,10 @@ WORK_DIR="$(mktemp -d)"
 CLIENT_NS="anix-c-${$}"
 ROUTER_NS="anix-r-${$}"
 TARGET_NS="anix-t-${$}"
+CLIENT_LINK="axc${$}"
+ROUTER_CLIENT_LINK="axr0${$}"
+ROUTER_TARGET_LINK="axr1${$}"
+TARGET_LINK="axt${$}"
 PLUGIN_PID=""
 TCP_PID=""
 UDP_PID=""
@@ -139,24 +143,24 @@ PY
 ip netns add "${CLIENT_NS}"
 ip netns add "${ROUTER_NS}"
 ip netns add "${TARGET_NS}"
-ip link add anix-c0 type veth peer name anix-r0
-ip link add anix-r1 type veth peer name anix-t0
-ip link set anix-c0 netns "${CLIENT_NS}"
-ip link set anix-r0 netns "${ROUTER_NS}"
-ip link set anix-r1 netns "${ROUTER_NS}"
-ip link set anix-t0 netns "${TARGET_NS}"
+ip link add "${CLIENT_LINK}" type veth peer name "${ROUTER_CLIENT_LINK}"
+ip link add "${ROUTER_TARGET_LINK}" type veth peer name "${TARGET_LINK}"
+ip link set "${CLIENT_LINK}" netns "${CLIENT_NS}"
+ip link set "${ROUTER_CLIENT_LINK}" netns "${ROUTER_NS}"
+ip link set "${ROUTER_TARGET_LINK}" netns "${ROUTER_NS}"
+ip link set "${TARGET_LINK}" netns "${TARGET_NS}"
 
-ip -n "${CLIENT_NS}" addr add 10.32.0.2/24 dev anix-c0
-ip -n "${ROUTER_NS}" addr add 10.32.0.1/24 dev anix-r0
-ip -n "${ROUTER_NS}" addr add 10.32.1.1/24 dev anix-r1
-ip -n "${TARGET_NS}" addr add 10.32.1.2/24 dev anix-t0
+ip -n "${CLIENT_NS}" addr add 10.32.0.2/24 dev "${CLIENT_LINK}"
+ip -n "${ROUTER_NS}" addr add 10.32.0.1/24 dev "${ROUTER_CLIENT_LINK}"
+ip -n "${ROUTER_NS}" addr add 10.32.1.1/24 dev "${ROUTER_TARGET_LINK}"
+ip -n "${TARGET_NS}" addr add 10.32.1.2/24 dev "${TARGET_LINK}"
 for ns in "${CLIENT_NS}" "${ROUTER_NS}" "${TARGET_NS}"; do
   ip -n "${ns}" link set lo up
 done
-ip -n "${CLIENT_NS}" link set anix-c0 up
-ip -n "${ROUTER_NS}" link set anix-r0 up
-ip -n "${ROUTER_NS}" link set anix-r1 up
-ip -n "${TARGET_NS}" link set anix-t0 up
+ip -n "${CLIENT_NS}" link set "${CLIENT_LINK}" up
+ip -n "${ROUTER_NS}" link set "${ROUTER_CLIENT_LINK}" up
+ip -n "${ROUTER_NS}" link set "${ROUTER_TARGET_LINK}" up
+ip -n "${TARGET_NS}" link set "${TARGET_LINK}" up
 ip -n "${CLIENT_NS}" route add 10.32.2.100/32 via 10.32.0.1
 ip -n "${TARGET_NS}" route add default via 10.32.1.1
 ip netns exec "${ROUTER_NS}" sysctl -q -w net.ipv4.ip_forward=1
@@ -208,8 +212,9 @@ for _ in {1..50}; do
   sleep 0.1
 done
 [[ -S "${SOCKET}" ]] || fail "plugin socket did not become ready"
-ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward | grep -q "tcp-namespace" || fail "TCP nftables rule was not installed"
-ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward | grep -q "udp-namespace" || fail "UDP nftables rule was not installed"
+RULESET="$(ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward 2>&1)" || fail "nftables table was not installed: ${RULESET}"
+grep -q "tcp-namespace" <<<"${RULESET}" || fail "TCP nftables rule was not installed: ${RULESET}"
+grep -q "udp-namespace" <<<"${RULESET}" || fail "UDP nftables rule was not installed: ${RULESET}"
 timeout 10 ip netns exec "${CLIENT_NS}" "${PYTHON_BIN}" "${CLIENT_CHECK}"
 
 kill "${PLUGIN_PID}"
@@ -236,7 +241,8 @@ for _ in {1..50}; do
   sleep 0.1
 done
 [[ -S "${SOCKET}" ]] || fail "plugin socket did not become ready for snapshot test"
-ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward | grep -q "tcp-namespace" || fail "replacement nftables rule was not installed"
+RULESET="$(ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward 2>&1)" || fail "replacement nftables table was not installed: ${RULESET}"
+grep -q "tcp-namespace" <<<"${RULESET}" || fail "replacement nftables rule was not installed: ${RULESET}"
 kill "${PLUGIN_PID}"
 wait "${PLUGIN_PID}"
 PLUGIN_PID=""
