@@ -28,6 +28,10 @@
       "GRPCServerName": "your-panel.com",
       "AgentControlEnabled": true,
       "AgentControlAllowInsecure": false,
+      "PluginSupervisorEnabled": true,
+      "PluginRoot": "/var/lib/anixops/plugins",
+      "PluginSocketDir": "/run/anixops/plugins",
+      "PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
       
       // 鑷姩娉ㄥ唽閰嶇疆
       "AutoRegister": true,

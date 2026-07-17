@@ -19,6 +19,9 @@ BIN_PATH="${INSTALL_DIR}/anix-agent"
 CONFIG_DIR="/etc/anixops/agent"
 RAW_BASE="https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}"
 CMD_NAME="anix-agent"
+DEFAULT_PLUGIN_ROOT="/var/lib/anixops/plugins"
+DEFAULT_PLUGIN_SOCKET_DIR="/run/anixops/plugins"
+OFFICIAL_PLUGIN_PUBLIC_KEY="IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M="
 
 LEGACY_SERVICE_NAME="V2bX"
 LEGACY_INSTALL_DIR="/usr/local/V2bX"
@@ -320,6 +323,7 @@ init_config_wizard() {
     local core_type api_host api_key node_id node_type timeout listen_ip send_ip cert_mode
     local transport grpc_host grpc_use_tls grpc_server_name grpc_keepalive
     local agent_control_enabled agent_control_allow_insecure grpc_tls_default
+    local plugin_supervisor_enabled plugin_supervisor_default
     local core_json
 
     info "进入初始化配置向导（将写入 ${cfg}）"
@@ -363,8 +367,19 @@ init_config_wizard() {
 
     if confirm "是否启用 Agent Control gRPC 长连接？" "y"; then
         agent_control_enabled=true
+        plugin_supervisor_default="y"
     else
         agent_control_enabled=false
+        plugin_supervisor_default="n"
+    fi
+
+    if confirm "是否启用 AnixOps 官方插件 Supervisor？" "${plugin_supervisor_default}"; then
+        plugin_supervisor_enabled=true
+    else
+        plugin_supervisor_enabled=false
+    fi
+    if [[ "${plugin_supervisor_enabled}" == "true" && "${agent_control_enabled}" != "true" ]]; then
+        warn "插件 Supervisor 已启用，但远程生命周期操作需要 Agent Control 长连接"
     fi
 
     grpc_host=""
@@ -445,6 +460,10 @@ init_config_wizard() {
       "GRPCKeepalive": ${grpc_keepalive},
       "AgentControlEnabled": ${agent_control_enabled},
       "AgentControlAllowInsecure": ${agent_control_allow_insecure},
+      "PluginSupervisorEnabled": ${plugin_supervisor_enabled},
+      "PluginRoot": "${DEFAULT_PLUGIN_ROOT}",
+      "PluginSocketDir": "${DEFAULT_PLUGIN_SOCKET_DIR}",
+      "PluginOfficialPublicKey": "${OFFICIAL_PLUGIN_PUBLIC_KEY}",
       "ApiKey": "$(json_escape "${api_key}")",
       "NodeID": ${node_id},
       "NodeType": "$(json_escape "${node_type}")",

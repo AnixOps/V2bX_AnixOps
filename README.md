@@ -21,13 +21,14 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
   `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
-## v3 Alpha 范围
+## 4.0 Alpha 范围
 
-`v3.1.0-alpha.1` 提供 Agent-first 的控制流与签名插件运行基础，但不是“所有任务已经全部迁移”
-的稳定版。新控制流通过 `AgentControlEnabled` 显式启用，用于握手、能力上报、
-心跳、受限操作、ACK 和观察状态；现有 REST/UniProxy、旧版 gRPC 与 WebSocket
-链路仍作为数据面和回退路径。生产部署应先在少量节点验证 TLS、重连和操作幂等
-性，再逐步扩大范围。
+`v4.0.0-alpha.1` 提供 AnixOps 官方签名软件包、WebUI 生命周期操作和 Agent
+Supervisor 的首个可操作闭环，但不是“所有任务已经全部迁移”的稳定版。新控制流
+通过 `AgentControlEnabled` 显式启用，用于握手、能力上报、心跳、受限操作、ACK
+和观察状态；`PluginSupervisorEnabled` 再独立启用官方包安装与运行。现有
+REST/UniProxy、旧版 gRPC 与 WebSocket 链路仍作为数据面和回退路径。生产部署
+应先在少量节点验证 TLS、重连、包签名、操作幂等和回滚，再逐步扩大范围。
 
 ## 官方插件运行时预览
 
@@ -67,6 +68,8 @@ FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、
 | 主程序 | `/usr/local/anixops-agent/anix-agent` |
 | 配置目录 | `/etc/anixops/agent` |
 | 主配置 | `/etc/anixops/agent/config.json` |
+| 官方插件状态 | `/var/lib/anixops/plugins` |
+| 插件 Unix socket | `/run/anixops/plugins` |
 | 容器镜像 | `ghcr.io/anixops/anix-agent` |
 
 ## Release 安装
@@ -75,7 +78,7 @@ FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v3.1.0-alpha.1
+export VERSION=v4.0.0-alpha.1
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -163,6 +166,10 @@ Windows：
   "GRPCKeepalive": 30,
   "AgentControlEnabled": true,
   "AgentControlAllowInsecure": false,
+  "PluginSupervisorEnabled": true,
+  "PluginRoot": "/var/lib/anixops/plugins",
+  "PluginSocketDir": "/run/anixops/plugins",
+  "PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M=",
   "NodeID": 1,
   "ApiKey": "your-api-key"
 }
@@ -170,6 +177,10 @@ Windows：
 
 若不显式设置 `AgentControlEnabled: true`，旧配置不会自动建立新控制流。公网或
 非回环地址必须使用 TLS；不要通过放宽明文开关来绕过生产证书配置。
+若不显式设置 `PluginSupervisorEnabled: true`，Agent 仍只运行旧数据面，不会
+接受官方软件包生命周期操作。上面的 Base64 值是 AnixOps 官方 Ed25519 公钥，
+不是私钥；Control 与 Agent 必须使用同一个信任根。安装向导会生成这些字段，
+并以 `Transport: "http"` 保留旧数据面回退。
 
 面板 API key 属于敏感信息，不要放入 shell 历史、公开日志或 Issue。
 

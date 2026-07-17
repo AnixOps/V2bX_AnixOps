@@ -27,6 +27,8 @@ LEGACY_DATA_DIR="${LEGACY_INSTALL_DIR}/data"
 LEGACY_BIN_PATH="${LEGACY_INSTALL_DIR}/V2bX"
 LEGACY_MANAGE_CMD_NAME="v2bx-anixops"
 MIGRATION_DIR="${CONFIG_DIR}/migration"
+PLUGIN_ROOT="${PLUGIN_ROOT:-/var/lib/anixops/plugins}"
+PLUGIN_SOCKET_DIR="${PLUGIN_SOCKET_DIR:-/run/anixops/plugins}"
 
 SYSTEMD_UNIT_DIR="${SYSTEMD_UNIT_DIR:-/etc/systemd/system}"
 OPENRC_INIT_DIR="${OPENRC_INIT_DIR:-/etc/init.d}"
@@ -276,7 +278,7 @@ copy_legacy_config() {
     mkdir -p "${CONFIG_DIR}"
     while IFS= read -r -d '' source_path; do
         local relative_path target_path
-        relative_path="${source_path#${LEGACY_CONFIG_DIR}/}"
+        relative_path="${source_path#"${LEGACY_CONFIG_DIR}"/}"
         target_path="${CONFIG_DIR}/${relative_path}"
 
         if [[ -d "${source_path}" && ! -L "${source_path}" ]]; then
@@ -533,6 +535,10 @@ install_files() {
     chmod 0644 "${VERSION_FILE}"
 }
 
+ensure_plugin_layout() {
+    install -d -m 0750 "${PLUGIN_ROOT}" "${PLUGIN_SOCKET_DIR}"
+}
+
 install_service() {
     if [[ "${release}" == "alpine" ]]; then
         mkdir -p "${OPENRC_INIT_DIR}"
@@ -637,6 +643,8 @@ ${INSTALL_DIR}/backups/ 以便服务启动失败时自动恢复。
 默认路径:
   程序目录: ${INSTALL_DIR}
   配置目录: ${CONFIG_DIR}
+  插件目录: ${PLUGIN_ROOT}
+  插件 Socket: ${PLUGIN_SOCKET_DIR}
   服务名称: ${SERVICE_NAME}.service
 
 检测到 ${LEGACY_CONFIG_DIR}、${LEGACY_INSTALL_DIR} 或 ${LEGACY_SERVICE_NAME}.service
@@ -706,6 +714,7 @@ main() {
     capture_legacy_service
     backup_existing_binary
     install_files "${zip_path}" "${version}"
+    ensure_plugin_layout
     install_manage_script "${manager_path}"
     install_service
 

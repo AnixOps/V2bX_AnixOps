@@ -18,6 +18,8 @@ DATA_DIR="${INSTALL_DIR}/data"
 BIN_PATH="${INSTALL_DIR}/anix-agent"
 LEGACY_BIN_PATH="${LEGACY_INSTALL_DIR}/V2bX"
 VERSION_FILE="${INSTALL_DIR}/.release-version"
+PLUGIN_ROOT="${test_root}/var/lib/anixops/plugins"
+PLUGIN_SOCKET_DIR="${test_root}/run/anixops/plugins"
 SYSTEMD_UNIT_DIR="${test_root}/etc/systemd/system"
 OPENRC_INIT_DIR="${test_root}/etc/init.d"
 
@@ -136,10 +138,24 @@ selected_asset="$(download_release_zip v2.5.0 linux-64)"
 
 grep -Fq 'ln -s anix-agent build_assets/V2bX' "${repo_root}/.github/workflows/release.yml"
 grep -Fq 'zip -9vyr ../anix-agent-' "${repo_root}/.github/workflows/release.yml"
-grep -Fq '"V2bX-${asset_suffix}.zip"' "${repo_root}/scripts/install.sh"
+grep -Fq "\"V2bX-\${asset_suffix}.zip\"" "${repo_root}/scripts/install.sh"
 grep -Fq 'credential.json.enc' "${repo_root}/scripts/install.sh"
 grep -Fq 'ANIX_AGENT_CONFIG:-/etc/anixops/agent/config.json' "${repo_root}/Dockerfile"
 grep -Fq '[ -e /etc/V2bX/config.json ]' "${repo_root}/Dockerfile"
+
+ensure_plugin_layout
+[[ "$(stat -c '%a' "${PLUGIN_ROOT}")" == "750" ]]
+[[ "$(stat -c '%a' "${PLUGIN_SOCKET_DIR}")" == "750" ]]
+
+for example in \
+    config.json config.grpc.json config_auto_register.json config_realtime_sync.json \
+    config_test_local.json config.wireguard.json; do
+    example_path="${repo_root}/example/${example}"
+    grep -Fq '"PluginSupervisorEnabled": true' "${example_path}"
+    grep -Fq '"PluginRoot": "/var/lib/anixops/plugins"' "${example_path}"
+    grep -Fq '"PluginSocketDir": "/run/anixops/plugins"' "${example_path}"
+    grep -Fq '"PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M="' "${example_path}"
+done
 
 (
     source "${repo_root}/scripts/anix-agent.sh"
@@ -164,7 +180,7 @@ grep -Fq '[ -e /etc/V2bX/config.json ]' "${repo_root}/Dockerfile"
     prompt_int() { printf '%s' "${2:-1}"; }
     confirm() {
         case "$1" in
-            "是否启用 Agent Control"*|"是否启用 Agent Control / gRPC TLS"*) return 0 ;;
+            "是否启用 Agent Control gRPC 长连接？"*|"是否启用 AnixOps 官方插件 Supervisor？"*|"是否启用 Agent Control / gRPC TLS？"*) return 0 ;;
             *) return 1 ;;
         esac
     }
@@ -175,6 +191,11 @@ grep -Fq '[ -e /etc/V2bX/config.json ]' "${repo_root}/Dockerfile"
     grep -Fq '"AgentControlEnabled": true' "${wizard_config}"
     grep -Fq '"GRPCUseTLS": true' "${wizard_config}"
     grep -Fq '"AgentControlAllowInsecure": false' "${wizard_config}"
+    grep -Fq '"PluginSupervisorEnabled": true' "${wizard_config}"
+    grep -Fq '"PluginRoot": "/var/lib/anixops/plugins"' "${wizard_config}"
+    grep -Fq '"PluginSocketDir": "/run/anixops/plugins"' "${wizard_config}"
+    grep -Fq '"PluginOfficialPublicKey": "IaqXgif/OGydNv/mQHoyFmqOvzeplICaMZndrhqMG0M="' "${wizard_config}"
+    grep -Fq '"Transport": "http"' "${wizard_config}"
     agent_control_host_is_loopback "[::1]:50051" "http://example.com"
     ! agent_control_host_is_loopback "control.example.com:50051" "http://127.0.0.1"
 )
