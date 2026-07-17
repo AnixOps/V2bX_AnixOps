@@ -2,7 +2,31 @@
 
 ## Unreleased
 
-No changes yet.
+## 4.0.0-alpha.4 - 2026-07-17
+
+### Added
+
+- Added the signed `machine-telemetry` 1.1.0 Agent package runtime with a
+  versioned local Unix gRPC snapshot RPC and bounded gopsutil-backed metrics.
+- Added Supervisor telemetry aggregation and heartbeat namespacing, including
+  plugin health, sample age, partial-failure handling, and deterministic metric
+  ordering.
+
+### Fixed
+
+- Added context-aware Supervisor lifecycle admission and retryable close/cleanup
+  fencing so concurrent operations cannot race shutdown or lose ownership state.
+- Propagated operation deadline and cancellation decisions through queueing,
+  handler execution, and plugin locks; timeout observations now use one stable
+  wire message for Control reconciliation.
+- Added a release-tag gate that requires CLI, registration, Docker, README,
+  install/migration guides, and Changelog versions to match before publishing.
+
+### Known Gaps
+
+- This is an opt-in alpha. It does not imply production forwarding cutover;
+  topology apply, Secret-ID materialization, and sustained canary evidence
+  remain required before stable 4.0 authorization.
 
 ## 4.0.0-alpha.3 - 2026-07-17
 

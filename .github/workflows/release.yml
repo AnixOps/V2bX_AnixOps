@@ -18,6 +18,9 @@ jobs:
     outputs:
       is_release_tag: ${{ steps.check.outputs.is_release_tag }}
     steps:
+      - name: Checkout codebase
+        uses: actions/checkout@v4
+
       - name: Check release or prerelease tag
         id: check
         shell: bash
@@ -30,12 +33,19 @@ jobs:
             echo "Not a release or release-candidate tag; release publication will be skipped."
           fi
 
+      - name: Verify release tag matches source versions
+        if: steps.check.outputs.is_release_tag == 'true'
+        run: python3 scripts/check_release_version.py --tag "${GITHUB_REF_NAME}"
+
   test:
     name: release prerequisite tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout codebase
         uses: actions/checkout@v4
+
+      - name: Test release version gate
+        run: python3 scripts/check_release_version.py --self-test
 
       - name: Set up Go
         uses: actions/setup-go@v5

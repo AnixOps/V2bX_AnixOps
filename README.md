@@ -23,11 +23,12 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 
 ## 4.0 Alpha 范围
 
-`v4.0.0-alpha.3` 提供 AnixOps 官方签名软件包、WebUI 生命周期操作和 Agent
-Supervisor 的首个可操作闭环，但不是“所有任务已经全部迁移”的稳定版。新控制流
+`v4.0.0-alpha.4` 提供 AnixOps 官方签名软件包、WebUI 生命周期操作、真实
+machine-telemetry 指标和 Agent Supervisor 的首个可操作闭环，但不是“所有任务已经全部迁移”的稳定版。新控制流
 通过 `AgentControlEnabled` 显式启用，用于握手、能力上报、心跳、受限操作、ACK
-和观察状态；`PluginSupervisorEnabled` 再独立启用官方包安装与运行。alpha.3
-将同一进程中的 Supervisor 按最终注册节点 ID 和 Control 身份隔离；全新安装使用
+和观察状态；`PluginSupervisorEnabled` 再独立启用官方包安装与运行。alpha.4
+在保留按最终注册节点 ID 和 Control 身份隔离的基础上增加 telemetry RPC、心跳指标
+和可重试生命周期关闭；全新安装使用
 `nodes/<node_id>` 状态目录，已有状态的单节点升级继续读取旧布局。现有
 REST/UniProxy、旧版 gRPC 与 WebSocket 链路仍作为数据面和回退路径。生产部署
 应先在少量节点验证 TLS、重连、包签名、操作幂等和回滚，再逐步扩大范围。
@@ -80,7 +81,7 @@ FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v4.0.0-alpha.3
+export VERSION=v4.0.0-alpha.4
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -108,7 +109,7 @@ anix-agent server -c /etc/anixops/agent/config.json
 ```
 
 安装器接受稳定版以及 `alpha`、`beta`、`rc` 预发布 tag，例如
-`v4.0.0-alpha.3`、`v4.0.0-beta.1` 和 `v4.0.0-rc.1`。
+`v4.0.0-alpha.4`、`v4.0.0-beta.1` 和 `v4.0.0-rc.1`。
 
 ## 从 V2bX_AnixOps 升级
 
