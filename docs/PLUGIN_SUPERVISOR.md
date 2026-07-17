@@ -37,6 +37,35 @@ process. A package may be zip, tar, or tar.gz and uses a signed platform
 entrypoint (`agent-<goos>-<goarch>`, `agent-any`, or `agent`). The original
 package and materialized executable are both re-hashed before every start.
 
+A packaged Agent entrypoint may declare signed auxiliary executables through
+the same `entrypoints` map:
+
+```json
+{
+  "runtime-gost-linux-amd64": "runtime/linux-amd64/gost",
+  "runtime-helper-any": "runtime/portable/helper"
+}
+```
+
+`runtime-<name>-<goos>-<goarch>` is preferred for the current platform. A
+single explicit `runtime-<name>-any` or `runtime-<name>` fallback may be used
+when no platform entry exists; declaring both fallback forms is rejected.
+Runtime names are lowercase path-safe identifiers. Runtime declarations must
+use canonical package paths distinct from every other declared entrypoint and
+regular non-empty files, with at most 32 declarations, 128 MiB per file, and
+256 MiB for the selected platform.
+Declarations for other platforms remain in the signed package but are not
+materialized on this Agent.
+
+Selected files are installed as
+`PluginRoot/<plugin>/<version>/runtime/<name>` with mode `0750`. Plugins locate
+them relative to their own materialized executable. Before every process
+start, the Supervisor re-verifies the package digest and compares every
+selected runtime byte-for-byte with its signed package member. Missing,
+non-regular, non-executable, oversized, or modified runtime files fail closed
+before the plugin runner is invoked. Raw legacy artifacts cannot declare
+auxiliary runtimes; they must use a packaged Agent entrypoint.
+
 The signed executable receives:
 
 ```text
@@ -77,12 +106,20 @@ old version; the old version is started only after target cleanup succeeds.
 This intentionally prefers no stale nftables or policy-routing ownership over
 automatic availability.
 
-The current `nat-egress` runtime uses this contract for its private crash-safe
-ownership journal. It programs nftables masquerade and fwmark policy routing,
-then exposes the standard local gRPC health service. Its privileged namespace
-acceptance proves marked forwarded traffic, wrong-mark isolation, NAT, policy
-state and rollback behavior. The real `gost-mesh` runtime remains pending.
-Artifact transport from Control, telemetry data transport, topology apply, and
-sustained canary evidence are not complete. Production activation also requires
-a signed release plus validated mark-producer and FORWARD-firewall prerequisites,
-so this phase must not be described as production forwarding cutover.
+The `nat-egress` and `gost-mesh` runtimes use this contract for private
+crash-safe ownership journals. `gost-mesh` also consumes a signed pinned GOST
+runtime from `runtime/gost`; QUIC and WSS require mutual TLS, and its privileged
+namespace matrix proves TCP/UDP data flow, TLS rejection, policy routing, child
+cleanup, and unrelated-state preservation. TUIC is not a GOST Mesh v1
+capability. Artifact transport from Control, Secret-ID materialization,
+topology apply, GOST-to-NAT composition, and sustained canary evidence are not
+complete, so this phase must not be described as production forwarding cutover.
+
+The signed `gost-mesh` executable also supports
+`--anixops-validate --anixops-config <absolute-path>` for release-gate contract
+checks. This mode only loads and validates the strict v1 JSON contract; it does
+not require a socket or state path and does not start GOST or mutate networking.
+Signed field values are never silently trimmed or lowercased; non-canonical
+role, transport, endpoint, CIDR, and health values are rejected.
+Only entry tunnels declare source-policy `routing.table` and `priority`; exit
+tunnels must omit them or set both to zero.

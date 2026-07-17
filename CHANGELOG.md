@@ -22,6 +22,21 @@
   lifecycle transitions, persisted `cleanup_pending`/cleanup-version recovery,
   and per-plugin serialization. A failed update-target cleanup leaves the old
   version disabled; automatic rollback starts it only after cleanup succeeds.
+- Added signed auxiliary runtime entrypoints such as
+  `runtime-gost-<goos>-<goarch>`, materialized into the immutable plugin
+  version directory and reverified byte-for-byte before every start.
+- Added the independent `gost-mesh` official plugin runtime. One signed plugin
+  process manages aggregate entry/exit tunnels, starts pinned GOST v3.2.6
+  children, owns TUN/source-policy state through a crash-safe journal, exposes
+  gRPC health, and performs bounded restart with fail-closed cleanup.
+- Added mandatory QUIC/WSS mutual TLS, source-bound remote health probes, IPv4
+  forwarding and reverse-path-filter preflight, and privileged namespace
+  acceptance proving wrong-SNI and unauthorized-client rejection, TCP/UDP
+  traffic, transport-family counters, rollback, and preservation of unrelated
+  policy state.
+- Added a side-effect-free `gost-mesh --anixops-validate` release gate, strict
+  canonical config parsing, bounded CIDR arrays, and entry-only policy table and
+  priority ownership.
 
 - Added a tag-pinned release installation guide and legacy migration runbook for fresh installs, same-fork updates, upstream config mapping, WireGuard canaries, rollback, and operator evidence.
 - Hardened the Linux release installer with ZIP SHA-256 verification, exact-tag management script retrieval, previous-binary backups, and automatic binary restoration when restart fails; it continues to install from GitHub Release assets without cloning or local builds.
@@ -47,6 +62,9 @@
 
 - Control production release-signing wiring for `nat-egress` is present, but
   production activation still requires a signed release, topology prerequisites,
-  staged canary evidence, and operator approval. The real `gost-mesh` official
-  plugin runtime and its WSS/TUIC/QUIC namespace evidence also remain pending.
+  staged canary evidence, and operator approval. `gost-mesh` now has real QUIC
+  and WSS runtime evidence; TUIC is intentionally outside GOST Mesh v1 because
+  pinned GOST v3.2.6 does not implement it. Control Secret-ID materialization,
+  status execution, GOST-to-NAT composition, and sustained canary evidence are
+  still pending.
 - `v2.5.0-rc.6` passed the release-gated QUIC and WSS namespace acceptance jobs. Real geographically separated dual-node evidence and real-client import evidence are still not complete. Runtime health reporting and GOST process supervision do not replace those production observations.
