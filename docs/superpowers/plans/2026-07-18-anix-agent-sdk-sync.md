@@ -78,9 +78,7 @@ Create `sdk/go.mod`:
 ~~~go
 module github.com/AnixOps/anix-agent/sdk
 
-go 1.25
-
-toolchain go1.25.0
+go 1.25.0
 
 require (
 	google.golang.org/grpc v1.77.0
@@ -152,9 +150,9 @@ Copy the existing protocol document to `sdk/api/grpc/agent/v1/PROTOCOL.md`, chan
 
 ~~~bash
 cd anix-agent/sdk
-go mod tidy
 chmod +x api/grpc/gen.sh
 PATH="$(go env GOPATH)/bin:${PATH}" bash api/grpc/gen.sh
+go mod tidy
 go test ./api/grpc/agent/v1 -run TestAgentControlServiceDescriptor -count=1
 git diff --exit-code -- api/grpc/agent/v1
 cd ..
