@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/AnixOps/anix-agent/v3/plugin/machinetelemetry"
+	"github.com/AnixOps/anix-agent/v4/plugin/machinetelemetry"
 )
 
 func main() {

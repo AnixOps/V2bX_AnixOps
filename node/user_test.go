@@ -3,7 +3,7 @@ package node
 import (
 	"testing"
 
-	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
 )
 
 func TestMergeOnlineDevicesDeduplicatesAndSkipsEmptyEntries(t *testing.T) {

@@ -18,7 +18,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v3/api/agent"
+	"github.com/AnixOps/anix-agent/v4/api/agent"
 	"github.com/stretchr/testify/require"
 )
 

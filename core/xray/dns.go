@@ -9,7 +9,7 @@ import (
 
 	"encoding/json"
 
-	"github.com/AnixOps/anix-agent/v3/api/panel"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
 	log "github.com/sirupsen/logrus"
 	coreConf "github.com/xtls/xray-core/infra/conf"
 )

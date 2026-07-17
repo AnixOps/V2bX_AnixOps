@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+No changes yet.
+
+## 4.0.0-alpha.1 - 2026-07-17
+
 ### Added
 
 - Added authenticated, same-origin `plugin.install` delivery for official

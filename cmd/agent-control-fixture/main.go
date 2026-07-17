@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v3/api/agent"
-	agentv1pb "github.com/AnixOps/anix-agent/v3/api/grpc/agent/v1"
-	"github.com/AnixOps/anix-agent/v3/plugin"
+	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
+	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
+	"github.com/AnixOps/anix-agent/v4/plugin"
 )
 
 type fixtureResult struct {

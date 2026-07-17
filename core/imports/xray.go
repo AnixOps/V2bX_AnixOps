@@ -2,4 +2,4 @@
 
 package imports
 
-import _ "github.com/AnixOps/anix-agent/v3/core/xray"
+import _ "github.com/AnixOps/anix-agent/v4/core/xray"

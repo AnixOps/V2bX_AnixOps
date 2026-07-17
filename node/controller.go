@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	apiclient "github.com/AnixOps/anix-agent/v3/api/client"
-	"github.com/AnixOps/anix-agent/v3/api/panel"
-	"github.com/AnixOps/anix-agent/v3/common/task"
-	"github.com/AnixOps/anix-agent/v3/conf"
-	vCore "github.com/AnixOps/anix-agent/v3/core"
-	"github.com/AnixOps/anix-agent/v3/limiter"
-	"github.com/AnixOps/anix-agent/v3/plugin"
+	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/common/task"
+	"github.com/AnixOps/anix-agent/v4/conf"
+	vCore "github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v4/limiter"
+	"github.com/AnixOps/anix-agent/v4/plugin"
 	log "github.com/sirupsen/logrus"
 )
 

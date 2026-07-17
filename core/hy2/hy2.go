@@ -1,8 +1,8 @@
 package hy2
 
 import (
-	"github.com/AnixOps/anix-agent/v3/conf"
-	vCore "github.com/AnixOps/anix-agent/v3/core"
+	"github.com/AnixOps/anix-agent/v4/conf"
+	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"go.uber.org/zap"
 )
 

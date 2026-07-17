@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/AnixOps/anix-agent/v3/conf"
+	"github.com/AnixOps/anix-agent/v4/conf"
 	"github.com/stretchr/testify/require"
 )
 

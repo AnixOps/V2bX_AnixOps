@@ -3,9 +3,9 @@ package hy2
 import (
 	"sync"
 
-	"github.com/AnixOps/anix-agent/v3/common/counter"
-	"github.com/AnixOps/anix-agent/v3/common/format"
-	"github.com/AnixOps/anix-agent/v3/limiter"
+	"github.com/AnixOps/anix-agent/v4/common/counter"
+	"github.com/AnixOps/anix-agent/v4/common/format"
+	"github.com/AnixOps/anix-agent/v4/limiter"
 	"github.com/apernet/hysteria/core/v2/server"
 	"go.uber.org/zap"
 )

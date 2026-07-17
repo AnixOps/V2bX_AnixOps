@@ -1,8 +1,8 @@
 package client
 
 import (
-	"github.com/AnixOps/anix-agent/v3/api/panel"
-	"github.com/AnixOps/anix-agent/v3/common/monitor"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/common/monitor"
 )
 
 // NodeAPI defines the contract required by node controllers regardless of transport.

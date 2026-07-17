@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/AnixOps/anix-agent/v3/plugin/nftablesforward"
+	"github.com/AnixOps/anix-agent/v4/plugin/nftablesforward"
 )
 
 func main() {

@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	pb "github.com/AnixOps/anix-agent/v3/api/grpc/v2boardpb"
-	"github.com/AnixOps/anix-agent/v3/api/panel"
-	"github.com/AnixOps/anix-agent/v3/common/monitor"
+	pb "github.com/AnixOps/anix-agent/v4/api/grpc/v2boardpb"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/common/monitor"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/connectivity"

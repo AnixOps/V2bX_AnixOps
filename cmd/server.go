@@ -7,10 +7,10 @@ import (
 	"runtime"
 	"syscall"
 
-	"github.com/AnixOps/anix-agent/v3/conf"
-	vCore "github.com/AnixOps/anix-agent/v3/core"
-	"github.com/AnixOps/anix-agent/v3/limiter"
-	"github.com/AnixOps/anix-agent/v3/node"
+	"github.com/AnixOps/anix-agent/v4/conf"
+	vCore "github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v4/limiter"
+	"github.com/AnixOps/anix-agent/v4/node"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )

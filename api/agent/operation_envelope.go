@@ -10,7 +10,7 @@ import (
 	"io"
 	"strings"
 
-	agentv1pb "github.com/AnixOps/anix-agent/v3/api/grpc/agent/v1"
+	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
 )
 
 const OperationEnvelopeVersion = "anixops.operation/v1"

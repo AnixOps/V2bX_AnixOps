@@ -4,8 +4,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v3/api/panel"
-	_ "github.com/AnixOps/anix-agent/v3/core/imports"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
+	_ "github.com/AnixOps/anix-agent/v4/core/imports"
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 )

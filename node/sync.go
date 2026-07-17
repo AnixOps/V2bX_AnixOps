@@ -12,10 +12,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	apiclient "github.com/AnixOps/anix-agent/v3/api/client"
-	"github.com/AnixOps/anix-agent/v3/api/panel"
-	"github.com/AnixOps/anix-agent/v3/common/sign"
-	vCore "github.com/AnixOps/anix-agent/v3/core"
+	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/common/sign"
+	vCore "github.com/AnixOps/anix-agent/v4/core"
 	"github.com/gorilla/websocket"
 	log "github.com/sirupsen/logrus"
 )

@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"time"
 
-	apiclient "github.com/AnixOps/anix-agent/v3/api/client"
-	"github.com/AnixOps/anix-agent/v3/api/panel"
-	"github.com/AnixOps/anix-agent/v3/common/monitor"
-	"github.com/AnixOps/anix-agent/v3/common/task"
-	vCore "github.com/AnixOps/anix-agent/v3/core"
-	"github.com/AnixOps/anix-agent/v3/limiter"
+	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/common/monitor"
+	"github.com/AnixOps/anix-agent/v4/common/task"
+	vCore "github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v4/limiter"
 	log "github.com/sirupsen/logrus"
 )
 

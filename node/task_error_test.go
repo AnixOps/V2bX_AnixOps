@@ -5,12 +5,12 @@ import (
 	"errors"
 	"testing"
 
-	apiclient "github.com/AnixOps/anix-agent/v3/api/client"
-	agentv1pb "github.com/AnixOps/anix-agent/v3/api/grpc/agent/v1"
-	"github.com/AnixOps/anix-agent/v3/api/panel"
-	"github.com/AnixOps/anix-agent/v3/common/monitor"
-	"github.com/AnixOps/anix-agent/v3/conf"
-	vCore "github.com/AnixOps/anix-agent/v3/core"
+	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
+	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/common/monitor"
+	"github.com/AnixOps/anix-agent/v4/conf"
+	vCore "github.com/AnixOps/anix-agent/v4/core"
 )
 
 var _ apiclient.NodeAPI = (*errorTestNodeAPI)(nil)

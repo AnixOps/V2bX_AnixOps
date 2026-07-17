@@ -7,7 +7,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/AnixOps/anix-agent/v3/common/exec"
+	"github.com/AnixOps/anix-agent/v4/common/exec"
 	"github.com/spf13/cobra"
 )
 

@@ -3,7 +3,7 @@ package grpc
 import (
 	"testing"
 
-	"github.com/AnixOps/anix-agent/v3/conf"
+	"github.com/AnixOps/anix-agent/v4/conf"
 )
 
 func TestResolveGRPCTarget(t *testing.T) {

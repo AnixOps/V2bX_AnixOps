@@ -1,13 +1,13 @@
 # Build go
 FROM golang:1.25.0-alpine AS builder
-ARG VERSION=v3.1.0-alpha.1
+ARG VERSION=v4.0.0-alpha.1
 WORKDIR /app
 COPY . .
 ENV CGO_ENABLED=0
 RUN GOEXPERIMENT=jsonv2 go mod download
 RUN GOEXPERIMENT=jsonv2 go build -v -o anix-agent \
     -tags "sing xray hysteria2 with_quic with_grpc with_utls with_wireguard with_acme with_gvisor" \
-    -ldflags "-X 'github.com/AnixOps/anix-agent/v3/cmd.version=${VERSION}' -s -w"
+    -ldflags "-X 'github.com/AnixOps/anix-agent/v4/cmd.version=${VERSION}' -s -w"
 
 # Release
 FROM  alpine

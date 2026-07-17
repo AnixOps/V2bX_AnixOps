@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/AnixOps/anix-agent/v3/common/counter"
-	"github.com/AnixOps/anix-agent/v3/common/rate"
-	"github.com/AnixOps/anix-agent/v3/limiter"
+	"github.com/AnixOps/anix-agent/v4/common/counter"
+	"github.com/AnixOps/anix-agent/v4/common/rate"
+	"github.com/AnixOps/anix-agent/v4/limiter"
 
 	"github.com/xtls/xray-core/app/dispatcher"
 	"github.com/xtls/xray-core/common"

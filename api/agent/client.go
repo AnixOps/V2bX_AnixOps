@@ -15,7 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	agentv1pb "github.com/AnixOps/anix-agent/v3/api/grpc/agent/v1"
+	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"

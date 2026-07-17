@@ -1,4 +1,4 @@
-module github.com/AnixOps/anix-agent/v3
+module github.com/AnixOps/anix-agent/v4
 
 go 1.25
 

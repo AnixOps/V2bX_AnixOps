@@ -12,7 +12,7 @@ all come from the same release.
 Run as root on Debian/Ubuntu, RHEL-compatible Linux, Alpine, or Arch:
 
 ```bash
-export VERSION=v3.1.0-alpha.1
+export VERSION=v4.0.0-alpha.1
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -46,7 +46,7 @@ sudo anix-agent log
 ```
 
 The wizard asks for panel URL, node ID, API key, core type, and the existing
-data-plane transport. It then asks separately whether to enable the v3 Agent
+data-plane transport. It then asks separately whether to enable the Agent
 Control stream. When enabled, configure its gRPC target, TLS preference, SNI,
 and keepalive settings. Never paste API keys into public logs or support tickets.
 
@@ -55,7 +55,7 @@ and keepalive settings. Never paste API keys into public logs or support tickets
 Install an exact stable or prerelease tag with the same command:
 
 ```bash
-sudo anix-agent update v3.0.0-rc.1
+sudo anix-agent update v4.0.0-alpha.1
 sudo anix-agent status
 ```
 
@@ -84,7 +84,7 @@ The old directories are not deleted. These compatibility entries remain:
 
 New releases publish only `anix-agent-*`. The new installer can consume an
 older `V2bX-*` asset and its `V2bX` executable name as a verified fallback.
-The v3 release line does not promise old asset filenames; its new archive only
+The v4 release line does not promise old asset filenames; its new archive only
 keeps a `V2bX -> anix-agent` executable symlink for command compatibility. See
 [ANIX_AGENT_MIGRATION.md](ANIX_AGENT_MIGRATION.md) before upgrading a
 production node.

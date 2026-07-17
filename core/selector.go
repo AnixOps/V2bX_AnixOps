@@ -6,8 +6,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/AnixOps/anix-agent/v3/api/panel"
-	"github.com/AnixOps/anix-agent/v3/conf"
+	"github.com/AnixOps/anix-agent/v4/api/panel"
+	"github.com/AnixOps/anix-agent/v4/conf"
 )
 
 type Selector struct {
