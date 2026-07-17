@@ -515,6 +515,17 @@ func (s *Supervisor) Install(ctx context.Context, request InstallRequest) (*Plug
 	if err != nil {
 		return nil, err
 	}
+	_, runtimeDeclared, err := resolveRuntimeEntrypoints(*manifest, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return nil, err
+	}
+	if runtimeDeclared && !packaged {
+		return nil, errors.New("signed runtime entrypoints require a packaged agent entrypoint")
+	}
+	runtimes, _, err := materializeRuntimeArtifacts(*manifest, request.Artifact, runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		return nil, err
+	}
 	unlockPlugin := s.lockPlugin(manifest.ID)
 	defer unlockPlugin()
 	s.mu.Lock()
@@ -559,6 +570,15 @@ func (s *Supervisor) Install(ctx context.Context, request InstallRequest) (*Plug
 	}
 	if err := writePrivateFile(filepath.Join(dir, pluginBinaryName), binary, 0o750); err != nil {
 		return nil, err
+	}
+	for _, runtimeArtifact := range runtimes {
+		if err := writePrivateFile(
+			filepath.Join(dir, pluginRuntimeDirName, runtimeArtifact.Name),
+			runtimeArtifact.Contents,
+			0o750,
+		); err != nil {
+			return nil, fmt.Errorf("materialize runtime %q: %w", runtimeArtifact.Name, err)
+		}
 	}
 	if err := writePrivateFile(filepath.Join(dir, manifestFileName), canonicalManifest, 0o600); err != nil {
 		return nil, err
@@ -1773,6 +1793,9 @@ func (s *Supervisor) verifyInstalledVersion(id, version string) (*Manifest, erro
 		return nil, errors.New("installed plugin artifact is not executable")
 	}
 	if err := verifyInstalledAgentArtifact(*manifest, dir, binaryPath); err != nil {
+		return nil, err
+	}
+	if err := verifyInstalledRuntimeArtifacts(*manifest, dir); err != nil {
 		return nil, err
 	}
 	return manifest, nil

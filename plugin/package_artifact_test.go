@@ -50,6 +50,273 @@ func TestSupervisorInstallsPlatformEntrypointFromSignedPackage(t *testing.T) {
 	require.ErrorContains(t, err, "does not match the signed package entrypoint")
 }
 
+func TestSupervisorMaterializesSignedPlatformRuntimes(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	supervisor, err := NewSupervisor(Config{RootDir: root, PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+	require.NoError(t, err)
+
+	agentEntrypoint := "agent/" + runtime.GOOS + "-" + runtime.GOARCH + "/plugin"
+	gostEntrypoint := "runtime/" + runtime.GOOS + "-" + runtime.GOARCH + "/gost"
+	gostFallback := "runtime/any/gost"
+	helperEntrypoint := "runtime/portable/health-helper"
+	artifact := makeZipArtifact(t, map[string][]byte{
+		agentEntrypoint:  []byte("signed agent executable"),
+		gostEntrypoint:   []byte("signed platform gost"),
+		gostFallback:     []byte("portable gost fallback"),
+		helperEntrypoint: []byte("signed portable helper"),
+	})
+	request := signedPackageRequest(t, privateKey, artifact, Manifest{
+		ID: "runtime-package", Name: "Runtime Package", Version: "1.0.0", APIVersion: pluginAPIVersion,
+		Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{runtime.GOOS + "/" + runtime.GOARCH},
+		Entrypoints: map[string]string{
+			"agent-" + runtime.GOOS + "-" + runtime.GOARCH:        agentEntrypoint,
+			"runtime-gost-" + runtime.GOOS + "-" + runtime.GOARCH: gostEntrypoint,
+			"runtime-gost-any":      gostFallback,
+			"runtime-health-helper": helperEntrypoint,
+		},
+	})
+
+	_, err = supervisor.Install(context.Background(), request)
+	require.NoError(t, err)
+	versionDir := filepath.Join(root, "runtime-package", "1.0.0")
+	for name, expected := range map[string][]byte{
+		"gost":          []byte("signed platform gost"),
+		"health-helper": []byte("signed portable helper"),
+	} {
+		installedPath := filepath.Join(versionDir, pluginRuntimeDirName, name)
+		installed, readErr := os.ReadFile(installedPath)
+		require.NoError(t, readErr)
+		require.Equal(t, expected, installed)
+		info, statErr := os.Stat(installedPath)
+		require.NoError(t, statErr)
+		require.Equal(t, os.FileMode(0o750), info.Mode().Perm())
+	}
+	_, err = supervisor.verifyInstalledVersion("runtime-package", "1.0.0")
+	require.NoError(t, err)
+}
+
+func TestSupervisorIgnoresRuntimeForAnotherPlatform(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	supervisor, err := NewSupervisor(Config{RootDir: root, PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+	require.NoError(t, err)
+
+	otherOS, otherArch := otherRuntimePlatform()
+	agentEntrypoint := "agent/" + runtime.GOOS + "-" + runtime.GOARCH + "/plugin"
+	otherEntrypoint := "runtime/" + otherOS + "-" + otherArch + "/gost"
+	artifact := makeZipArtifact(t, map[string][]byte{
+		agentEntrypoint: []byte("signed agent executable"),
+		otherEntrypoint: []byte("runtime for another platform"),
+	})
+	request := signedPackageRequest(t, privateKey, artifact, Manifest{
+		ID: "foreign-runtime", Name: "Foreign Runtime", Version: "1.0.0", APIVersion: pluginAPIVersion,
+		Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{runtime.GOOS + "/" + runtime.GOARCH},
+		Entrypoints: map[string]string{
+			"agent-" + runtime.GOOS + "-" + runtime.GOARCH: agentEntrypoint,
+			"runtime-gost-" + otherOS + "-" + otherArch:    otherEntrypoint,
+		},
+	})
+
+	_, err = supervisor.Install(context.Background(), request)
+	require.NoError(t, err)
+	_, err = os.Stat(filepath.Join(root, "foreign-runtime", "1.0.0", pluginRuntimeDirName, "gost"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = supervisor.verifyInstalledVersion("foreign-runtime", "1.0.0")
+	require.NoError(t, err)
+}
+
+func TestSupervisorRejectsConflictingRuntimeDeclarations(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	agentEntrypoint := "agent/" + runtime.GOOS + "-" + runtime.GOARCH + "/plugin"
+	baseManifest := Manifest{
+		ID: "runtime-conflict", Name: "Runtime Conflict", Version: "1.0.0", APIVersion: pluginAPIVersion,
+		Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{runtime.GOOS + "/" + runtime.GOARCH},
+	}
+
+	t.Run("any and generic fallback", func(t *testing.T) {
+		artifact := makeZipArtifact(t, map[string][]byte{
+			agentEntrypoint:      []byte("agent"),
+			"runtime/any/gost":   []byte("any"),
+			"runtime/plain/gost": []byte("plain"),
+		})
+		manifest := baseManifest
+		manifest.Entrypoints = map[string]string{
+			"agent-" + runtime.GOOS + "-" + runtime.GOARCH: agentEntrypoint,
+			"runtime-gost-any": "runtime/any/gost",
+			"runtime-gost":     "runtime/plain/gost",
+		}
+		supervisor, createErr := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+		require.NoError(t, createErr)
+		_, installErr := supervisor.Install(context.Background(), signedPackageRequest(t, privateKey, artifact, manifest))
+		require.ErrorContains(t, installErr, "conflicting any and generic fallbacks")
+	})
+
+	t.Run("duplicate package path", func(t *testing.T) {
+		artifact := makeZipArtifact(t, map[string][]byte{
+			agentEntrypoint:    []byte("agent"),
+			"runtime/bin/tool": []byte("shared"),
+		})
+		manifest := baseManifest
+		manifest.Entrypoints = map[string]string{
+			"agent-" + runtime.GOOS + "-" + runtime.GOARCH: agentEntrypoint,
+			"runtime-gost":   "runtime/bin/tool",
+			"runtime-helper": "runtime/bin/tool",
+		}
+		supervisor, createErr := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+		require.NoError(t, createErr)
+		_, installErr := supervisor.Install(context.Background(), signedPackageRequest(t, privateKey, artifact, manifest))
+		require.ErrorContains(t, installErr, "use the same package path")
+	})
+
+	t.Run("runtime reuses agent path", func(t *testing.T) {
+		artifact := makeZipArtifact(t, map[string][]byte{agentEntrypoint: []byte("agent")})
+		manifest := baseManifest
+		manifest.Entrypoints = map[string]string{
+			"agent-" + runtime.GOOS + "-" + runtime.GOARCH: agentEntrypoint,
+			"runtime-gost": agentEntrypoint,
+		}
+		supervisor, createErr := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+		require.NoError(t, createErr)
+		_, installErr := supervisor.Install(context.Background(), signedPackageRequest(t, privateKey, artifact, manifest))
+		require.ErrorContains(t, installErr, "use the same package path")
+	})
+
+	t.Run("raw legacy artifact", func(t *testing.T) {
+		manifest := baseManifest
+		manifest.Entrypoints = map[string]string{"runtime-gost": "runtime/bin/gost"}
+		supervisor, createErr := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+		require.NoError(t, createErr)
+		_, installErr := supervisor.Install(context.Background(), signedPackageRequest(t, privateKey, []byte("raw executable"), manifest))
+		require.ErrorContains(t, installErr, "require a packaged agent entrypoint")
+	})
+}
+
+func TestSupervisorRejectsUnsafeMissingAndIrregularRuntime(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	agentEntrypoint := "agent/" + runtime.GOOS + "-" + runtime.GOARCH + "/plugin"
+	runtimeKey := "runtime-gost-" + runtime.GOOS + "-" + runtime.GOARCH
+	baseManifest := Manifest{
+		ID: "invalid-runtime", Name: "Invalid Runtime", Version: "1.0.0", APIVersion: pluginAPIVersion,
+		Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{runtime.GOOS + "/" + runtime.GOARCH},
+	}
+
+	t.Run("traversal", func(t *testing.T) {
+		artifact := makeZipArtifact(t, map[string][]byte{agentEntrypoint: []byte("agent")})
+		manifest := baseManifest
+		manifest.Entrypoints = map[string]string{
+			"agent-" + runtime.GOOS + "-" + runtime.GOARCH: agentEntrypoint,
+			runtimeKey: "../runtime/gost",
+		}
+		supervisor, createErr := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+		require.NoError(t, createErr)
+		_, installErr := supervisor.Install(context.Background(), signedPackageRequest(t, privateKey, artifact, manifest))
+		require.ErrorContains(t, installErr, "canonical relative path")
+	})
+
+	t.Run("missing package member", func(t *testing.T) {
+		artifact := makeZipArtifact(t, map[string][]byte{agentEntrypoint: []byte("agent")})
+		manifest := baseManifest
+		manifest.Entrypoints = map[string]string{
+			"agent-" + runtime.GOOS + "-" + runtime.GOARCH: agentEntrypoint,
+			runtimeKey: "runtime/bin/gost",
+		}
+		supervisor, createErr := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+		require.NoError(t, createErr)
+		_, installErr := supervisor.Install(context.Background(), signedPackageRequest(t, privateKey, artifact, manifest))
+		require.ErrorContains(t, installErr, "was not found")
+	})
+
+	t.Run("symlink package member", func(t *testing.T) {
+		artifact := makeZipArtifactWithSymlink(t, agentEntrypoint, "runtime/bin/gost")
+		manifest := baseManifest
+		manifest.Entrypoints = map[string]string{
+			"agent-" + runtime.GOOS + "-" + runtime.GOARCH: agentEntrypoint,
+			runtimeKey: "runtime/bin/gost",
+		}
+		supervisor, createErr := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+		require.NoError(t, createErr)
+		_, installErr := supervisor.Install(context.Background(), signedPackageRequest(t, privateKey, artifact, manifest))
+		require.ErrorContains(t, installErr, "not a regular file")
+	})
+
+	t.Run("duplicate package member", func(t *testing.T) {
+		artifact := makeZipArtifactWithDuplicateRuntime(t, agentEntrypoint, "runtime/bin/gost")
+		manifest := baseManifest
+		manifest.Entrypoints = map[string]string{
+			"agent-" + runtime.GOOS + "-" + runtime.GOARCH: agentEntrypoint,
+			runtimeKey: "runtime/bin/gost",
+		}
+		supervisor, createErr := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+		require.NoError(t, createErr)
+		_, installErr := supervisor.Install(context.Background(), signedPackageRequest(t, privateKey, artifact, manifest))
+		require.ErrorContains(t, installErr, "appears more than once")
+	})
+}
+
+func TestSupervisorReverifiesSignedRuntimeBeforeStart(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		mutate  func(t *testing.T, path string)
+		wantErr string
+	}{
+		{
+			name: "missing",
+			mutate: func(t *testing.T, path string) {
+				require.NoError(t, os.Remove(path))
+			},
+			wantErr: "inspect installed runtime",
+		},
+		{
+			name: "tampered",
+			mutate: func(t *testing.T, path string) {
+				require.NoError(t, os.WriteFile(path, []byte("tampered runtime"), 0o750))
+			},
+			wantErr: "does not match the signed package entrypoint",
+		},
+		{
+			name: "not executable",
+			mutate: func(t *testing.T, path string) {
+				require.NoError(t, os.Chmod(path, 0o600))
+			},
+			wantErr: "is not executable",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+			require.NoError(t, err)
+			root := t.TempDir()
+			runner := &fakeRunner{}
+			supervisor, err := NewSupervisor(Config{RootDir: root, PublicKey: publicKey, Runner: runner, Health: &fakeHealth{}})
+			require.NoError(t, err)
+			agentEntrypoint := "agent/" + runtime.GOOS + "-" + runtime.GOARCH + "/plugin"
+			runtimeEntrypoint := "runtime/" + runtime.GOOS + "-" + runtime.GOARCH + "/gost"
+			artifact := makeZipArtifact(t, map[string][]byte{
+				agentEntrypoint:   []byte("agent"),
+				runtimeEntrypoint: []byte("signed gost runtime"),
+			})
+			manifest := Manifest{
+				ID: "runtime-start", Name: "Runtime Start", Version: "1.0.0", APIVersion: pluginAPIVersion,
+				Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{runtime.GOOS + "/" + runtime.GOARCH},
+				Entrypoints: map[string]string{
+					"agent-" + runtime.GOOS + "-" + runtime.GOARCH:        agentEntrypoint,
+					"runtime-gost-" + runtime.GOOS + "-" + runtime.GOARCH: runtimeEntrypoint,
+				},
+			}
+			_, err = supervisor.Install(context.Background(), signedPackageRequest(t, privateKey, artifact, manifest))
+			require.NoError(t, err)
+			test.mutate(t, filepath.Join(root, manifest.ID, manifest.Version, pluginRuntimeDirName, "gost"))
+			_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-runtime-"+test.name, manifest.ID, manifest.Version, 1, []byte(`{}`)))
+			require.ErrorContains(t, err, test.wantErr)
+			require.Equal(t, 0, runner.Starts())
+		})
+	}
+}
+
 func TestSupervisorRejectsEntrypointChangeForSameArtifactAndVersion(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -122,6 +389,21 @@ func TestPackageEntrypointRejectsDuplicateAndLink(t *testing.T) {
 	require.ErrorContains(t, err, "not a regular file")
 }
 
+func TestRuntimeEntrypointRejectsOversizedFile(t *testing.T) {
+	entrypoint := "runtime/bin/gost"
+	file := &zip.File{FileHeader: zip.FileHeader{
+		Name:               entrypoint,
+		UncompressedSize64: uint64(maxPluginRuntimeBytes + 1),
+	}}
+	_, err := extractZipFile(
+		&zip.Reader{File: []*zip.File{file}},
+		entrypoint,
+		"runtime \"gost\" entrypoint",
+		maxPluginRuntimeBytes,
+	)
+	require.ErrorContains(t, err, "exceeds")
+}
+
 func signedPackageRequest(t *testing.T, privateKey ed25519.PrivateKey, artifact []byte, manifest Manifest) InstallRequest {
 	t.Helper()
 	digest := sha256.Sum256(artifact)
@@ -147,4 +429,47 @@ func makeZipArtifact(t *testing.T, files map[string][]byte) []byte {
 	}
 	require.NoError(t, writer.Close())
 	return artifact.Bytes()
+}
+
+func makeZipArtifactWithSymlink(t *testing.T, agentEntrypoint, runtimeEntrypoint string) []byte {
+	t.Helper()
+	var artifact bytes.Buffer
+	writer := zip.NewWriter(&artifact)
+	agentFile, err := writer.Create(agentEntrypoint)
+	require.NoError(t, err)
+	_, err = agentFile.Write([]byte("agent"))
+	require.NoError(t, err)
+	header := &zip.FileHeader{Name: runtimeEntrypoint}
+	header.SetMode(os.ModeSymlink | 0o777)
+	runtimeFile, err := writer.CreateHeader(header)
+	require.NoError(t, err)
+	_, err = runtimeFile.Write([]byte("/usr/bin/gost"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	return artifact.Bytes()
+}
+
+func makeZipArtifactWithDuplicateRuntime(t *testing.T, agentEntrypoint, runtimeEntrypoint string) []byte {
+	t.Helper()
+	var artifact bytes.Buffer
+	writer := zip.NewWriter(&artifact)
+	agentFile, err := writer.Create(agentEntrypoint)
+	require.NoError(t, err)
+	_, err = agentFile.Write([]byte("agent"))
+	require.NoError(t, err)
+	for range 2 {
+		runtimeFile, createErr := writer.Create(runtimeEntrypoint)
+		require.NoError(t, createErr)
+		_, writeErr := runtimeFile.Write([]byte("gost"))
+		require.NoError(t, writeErr)
+	}
+	require.NoError(t, writer.Close())
+	return artifact.Bytes()
+}
+
+func otherRuntimePlatform() (string, string) {
+	if runtime.GOOS != "windows" || runtime.GOARCH != "amd64" {
+		return "windows", "amd64"
+	}
+	return "linux", "arm64"
 }
