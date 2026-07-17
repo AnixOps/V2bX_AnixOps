@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -17,6 +19,7 @@ import (
 
 	agentapi "github.com/AnixOps/anix-agent/v3/api/agent"
 	agentv1pb "github.com/AnixOps/anix-agent/v3/api/grpc/agent/v1"
+	"github.com/AnixOps/anix-agent/v3/plugin"
 )
 
 type fixtureResult struct {
@@ -32,43 +35,46 @@ type fixtureResult struct {
 
 func main() {
 	var (
-		target     = flag.String("target", "", "Control gRPC host:port")
-		nodeID     = flag.Int("node-id", 0, "Control node ID")
-		apiKey     = flag.String("api-key", "", "Control node API key")
-		readyFile  = flag.String("ready-file", "", "file written after the Agent stream is ready")
-		resultFile = flag.String("result-file", "", "file written after an operation is handled")
-		timeout    = flag.Duration("timeout", 30*time.Second, "maximum fixture lifetime")
+		target          = flag.String("target", "", "Control gRPC host:port")
+		nodeID          = flag.Int("node-id", 0, "Control node ID")
+		apiKey          = flag.String("api-key", "", "Control node API key")
+		readyFile       = flag.String("ready-file", "", "file written after the Agent stream is ready")
+		resultFile      = flag.String("result-file", "", "file written after an operation is handled")
+		timeout         = flag.Duration("timeout", 30*time.Second, "maximum fixture lifetime")
+		pluginRoot      = flag.String("plugin-root", "", "enable the production plugin Supervisor at this root")
+		pluginSockets   = flag.String("plugin-socket-dir", "", "private Unix socket directory for plugin processes")
+		pluginPublicKey = flag.String("plugin-public-key", "", "base64 Ed25519 official plugin public key")
+		pluginBaseURL   = flag.String("plugin-base-url", "", "Control HTTP origin used for signed plugin downloads")
 	)
 	flag.Parse()
 	if *target == "" || *nodeID <= 0 || *apiKey == "" || *readyFile == "" || *resultFile == "" {
 		fatal(errors.New("target, node-id, api-key, ready-file, and result-file are required"))
 	}
 
+	operationHandler, capabilities, closePlugins, err := newOperationHandler(pluginFixtureConfig{
+		RootDir: *pluginRoot, SocketDir: *pluginSockets, PublicKey: *pluginPublicKey,
+		BaseURL: *pluginBaseURL, APIKey: *apiKey, ResultFile: *resultFile,
+	})
+	if err != nil {
+		fatal(err)
+	}
+	if closePlugins != nil {
+		defer func() {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if closeErr := closePlugins(closeCtx); closeErr != nil {
+				fmt.Fprintln(os.Stderr, closeErr)
+			}
+		}()
+	}
+
 	client, err := agentapi.NewClient(agentapi.Config{
 		Target: *target, NodeID: *nodeID, APIKey: *apiKey,
 		AgentVersion: "agent-control-fixture", InstanceID: "agent-control-fixture-" + strconv.Itoa(os.Getpid()),
-		Capabilities: []*agentv1pb.Capability{
-			{Name: "agent.control", Version: "v1"},
-			{Name: "operation.cancel", Version: "v1"},
-			{Name: "plugin.health", Version: "v1"},
-		},
+		Capabilities: capabilities,
 		ReconnectMin: 20 * time.Millisecond, ReconnectMax: 100 * time.Millisecond,
 		Heartbeat: 5 * time.Second, DialTimeout: 3 * time.Second, HandshakeTimeout: 3 * time.Second,
-		Handler: agentapi.OperationHandlerFunc(func(ctx context.Context, operation *agentv1pb.DesiredOperation) (json.RawMessage, error) {
-			envelope, decodeErr := agentapi.DecodeOperationEnvelopeContext(ctx, operation)
-			if decodeErr != nil {
-				return nil, decodeErr
-			}
-			result := fixtureResult{
-				OperationID: operation.OperationId, Kind: operation.Kind, SessionID: envelope.SessionID,
-				Revision: envelope.Revision, PluginID: envelope.PluginID, TargetVersion: envelope.TargetVersion,
-				ConfigHash: envelope.ConfigHash, Config: append(json.RawMessage(nil), envelope.Config...),
-			}
-			if writeErr := writeJSONAtomically(*resultFile, result); writeErr != nil {
-				return nil, writeErr
-			}
-			return json.RawMessage(`{"fixture":"agent-control","status":"ok"}`), nil
-		}),
+		Handler: operationHandler,
 	})
 	if err != nil {
 		fatal(err)
@@ -105,6 +111,86 @@ func main() {
 	case <-lifetime.C:
 		fatal(errors.New("Agent fixture timed out waiting for an operation"))
 	}
+}
+
+type pluginFixtureConfig struct {
+	RootDir    string
+	SocketDir  string
+	PublicKey  string
+	BaseURL    string
+	APIKey     string
+	ResultFile string
+}
+
+func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler, []*agentv1pb.Capability, func(context.Context) error, error) {
+	capabilities := []*agentv1pb.Capability{
+		{Name: "agent.control", Version: "v1"},
+		{Name: "operation.cancel", Version: "v1"},
+		{Name: "plugin.health", Version: "v1"},
+	}
+	record := func(ctx context.Context, operation *agentv1pb.DesiredOperation) (*agentapi.OperationEnvelope, error) {
+		envelope, err := agentapi.DecodeOperationEnvelopeContext(ctx, operation)
+		if err != nil {
+			return nil, err
+		}
+		result := fixtureResult{
+			OperationID: operation.OperationId, Kind: operation.Kind, SessionID: envelope.SessionID,
+			Revision: envelope.Revision, PluginID: envelope.PluginID, TargetVersion: envelope.TargetVersion,
+			ConfigHash: envelope.ConfigHash, Config: append(json.RawMessage(nil), envelope.Config...),
+		}
+		if err := writeJSONAtomically(config.ResultFile, result); err != nil {
+			return nil, err
+		}
+		return envelope, nil
+	}
+
+	pluginMode := config.RootDir != "" || config.SocketDir != "" || config.PublicKey != "" || config.BaseURL != ""
+	if !pluginMode {
+		return agentapi.OperationHandlerFunc(func(ctx context.Context, operation *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			if _, err := record(ctx, operation); err != nil {
+				return nil, err
+			}
+			return json.RawMessage(`{"fixture":"agent-control","status":"ok"}`), nil
+		}), capabilities, nil, nil
+	}
+	if config.RootDir == "" || config.SocketDir == "" || config.PublicKey == "" || config.BaseURL == "" {
+		return nil, nil, nil, errors.New("plugin-root, plugin-socket-dir, plugin-public-key, and plugin-base-url are all required in plugin mode")
+	}
+	decodedKey, err := base64.StdEncoding.DecodeString(config.PublicKey)
+	if err != nil || len(decodedKey) != ed25519.PublicKeySize {
+		return nil, nil, nil, errors.New("plugin-public-key must be a base64 Ed25519 public key")
+	}
+	supervisor, err := plugin.NewSupervisor(plugin.Config{
+		RootDir: config.RootDir, SocketDir: config.SocketDir, PublicKey: ed25519.PublicKey(decodedKey),
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	installer, err := plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{
+		Supervisor: supervisor, BaseURL: config.BaseURL, APIKey: config.APIKey,
+	})
+	if err != nil {
+		_ = supervisor.Close(context.Background())
+		return nil, nil, nil, err
+	}
+	capabilities = capabilities[:2]
+	for _, name := range []string{
+		"plugin.install", "plugin.inspect", "plugin.configure", "plugin.enable",
+		"plugin.disable", "plugin.update", "plugin.rollback", "plugin.health",
+	} {
+		capabilities = append(capabilities, &agentv1pb.Capability{Name: name, Version: "v1"})
+	}
+	handler := agentapi.OperationHandlerFunc(func(ctx context.Context, operation *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+		envelope, err := record(ctx, operation)
+		if err != nil {
+			return nil, err
+		}
+		if operation.Kind == "plugin.install" {
+			return installer.Handle(ctx, envelope)
+		}
+		return supervisor.Handle(ctx, operation.Kind, envelope)
+	})
+	return handler, capabilities, supervisor.Close, nil
 }
 
 func writeJSONAtomically(path string, value any) error {
