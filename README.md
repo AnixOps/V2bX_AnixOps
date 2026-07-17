@@ -21,21 +21,20 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
   `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
-## 4.0 Alpha 范围
+## 3.1 Alpha.2 范围
 
-`v4.0.0-alpha.7` 提供 AnixOps 官方签名软件包、WebUI 生命周期操作、真实
-machine-telemetry 指标，以及 crash-safe `nftables-forward` 1.2.0。该版本把
-live nftables ruleset fingerprint 和 per-rule counter 作为受限 heartbeat evidence
-上报，但不是“所有任务已经全部迁移”的稳定版。新控制流
-通过 `AgentControlEnabled` 显式启用，用于握手、能力上报、心跳、受限操作、ACK
-和观察状态；`PluginSupervisorEnabled` 再独立启用官方包安装与运行。alpha.7
-在 alpha.4 的 telemetry RPC、心跳指标和可重试生命周期关闭基础上，增加
-nftables ownership journal、签名 cleanup/validate 入口和进程崩溃恢复；全新安装使用
-`nodes/<node_id>` 状态目录，已有状态的单节点升级继续读取旧布局。现有
-REST/UniProxy、旧版 gRPC 与 WebSocket 链路仍作为数据面和回退路径。生产部署
-应先在少量节点验证 TLS、重连、包签名、操作幂等和回滚，再逐步扩大范围。
+`v3.1.0-alpha.2` 提供 AnixOps 官方签名软件包 `machine-telemetry` 1.1.0，
+以及对应的 Control 签名 WebUI 合约。它是正式 3.1--4.0 分阶段版本线的首个
+可安装候选，不接管生产业务流量。`AgentControlEnabled` 和
+`PluginSupervisorEnabled` 仍必须由操作员显式启用，并应只在 TLS 控制流上的少量
+canary 节点验证包签名、重连、幂等操作、观察状态和回滚。现有 REST/UniProxy、
+旧版 gRPC 与 WebSocket 链路继续作为数据面和回退路径。
 
-## 官方插件运行时预览
+产品发布版本回到 3.1 阶段线；Go 模块路径 `/v4` 是兼容 ABI 命名空间，并不表示
+本次已经发布 4.0。`v4.0.0-alpha.1` 至 `v4.0.0-alpha.7` 保留为历史预览制品，
+不能作为本阶段的发布范围或生产接管依据。
+
+## 历史 v4 Alpha 运行时预览（非 3.1.0-alpha.2 发布范围）
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
 真实的 `nftables-forward`、`nat-egress` 与 `gost-mesh` 独立进程。Supervisor
@@ -96,7 +95,7 @@ FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v4.0.0-alpha.7
+export VERSION=v3.1.0-alpha.2
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -124,7 +123,7 @@ anix-agent server -c /etc/anixops/agent/config.json
 ```
 
 安装器接受稳定版以及 `alpha`、`beta`、`rc` 预发布 tag，例如
-`v4.0.0-alpha.7`、`v4.0.0-beta.1` 和 `v4.0.0-rc.1`。
+`v3.1.0-alpha.2`、`v3.1.0-beta.1` 和 `v3.1.0-rc.1`。
 
 ## 从 V2bX_AnixOps 升级
 

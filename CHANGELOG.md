@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 3.1.0-alpha.2 - 2026-07-18
+
+### Added
+
+- Started the formal 3.1--4.0 staged release line. This prerelease publishes
+  only the `machine-telemetry` 1.1.0 official signed package contract shared
+  by Control, Agent, and the signed Control WebUI.
+
+### Changed
+
+- Product release metadata now uses `3.1.0-alpha.2`. The Go module path stays
+  `github.com/AnixOps/anix-agent/v4` as an ABI namespace; it is not a claim
+  that AnixOps 4.0 has been released.
+
+### Known Gaps
+
+- `nftables-forward`, `gost-mesh`, `nat-egress`, WireGuard, and protocol
+  runtime work are outside this package-release scope. They remain historical
+  v4 preview work and must not be promoted to production traffic from this tag.
+
 ## 4.0.0-alpha.7 - 2026-07-18
 
 ### Changed
