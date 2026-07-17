@@ -34,6 +34,8 @@ type Controller struct {
 	logHook                   *RemoteLogHook
 	reconcileMu               sync.Mutex
 	pluginSupervisor          *plugin.Supervisor
+	limiterAdded              bool
+	nodeAdded                 bool
 	*conf.Options
 }
 
@@ -84,11 +86,12 @@ func (c *Controller) Start() error {
 
 	// add limiter
 	l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, c.aliveMap)
+	c.limiter = l
+	c.limiterAdded = true
 	// add rule limiter
 	if err = l.UpdateRule(&node.Rules); err != nil {
 		return fmt.Errorf("update rule error: %s", err)
 	}
-	c.limiter = l
 	if node.Security == panel.Tls {
 		err = c.requestCert()
 		if err != nil {
@@ -100,6 +103,7 @@ func (c *Controller) Start() error {
 	if err != nil {
 		return fmt.Errorf("add new node error: %s", err)
 	}
+	c.nodeAdded = true
 	added, err := c.server.AddUsers(&vCore.AddUsersParams{
 		Tag:      c.tag,
 		Users:    c.userList,
@@ -133,7 +137,10 @@ func (c *Controller) Close() error {
 		c.syncManager = nil
 	}
 
-	limiter.DeleteLimiter(c.tag)
+	if c.limiterAdded {
+		limiter.DeleteLimiter(c.tag)
+		c.limiterAdded = false
+	}
 	if c.nodeInfoMonitorPeriodic != nil {
 		c.nodeInfoMonitorPeriodic.Close()
 	}
@@ -153,8 +160,11 @@ func (c *Controller) Close() error {
 		c.logHook.Close()
 		c.logHook = nil
 	}
-	if err := c.server.DelNode(c.tag); err != nil {
-		closeErr = errors.Join(closeErr, fmt.Errorf("del node error: %w", err))
+	if c.nodeAdded {
+		if err := c.server.DelNode(c.tag); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("del node error: %w", err))
+		}
+		c.nodeAdded = false
 	}
 	if err := c.apiClient.Close(); err != nil {
 		closeErr = errors.Join(closeErr, fmt.Errorf("close api client error: %w", err))
@@ -223,14 +233,19 @@ func (c *Controller) reloadNode(newNode *panel.NodeInfo) error {
 		}).Error("Failed to delete old node")
 		return err
 	}
+	c.nodeAdded = false
 
 	// 更新 tag
 	if len(c.Options.Name) == 0 {
 		c.tag = c.buildNodeTag(newNode)
 		// 更新 limiter
-		limiter.DeleteLimiter(oldTag)
+		if c.limiterAdded {
+			limiter.DeleteLimiter(oldTag)
+			c.limiterAdded = false
+		}
 		l := limiter.AddLimiter(c.tag, &c.LimitConfig, c.userList, c.aliveMap)
 		c.limiter = l
+		c.limiterAdded = true
 	}
 
 	// 更新规则
@@ -261,6 +276,7 @@ func (c *Controller) reloadNode(newNode *panel.NodeInfo) error {
 		}).Error("Failed to add new node")
 		return err
 	}
+	c.nodeAdded = true
 
 	// 添加用户
 	added, err := c.server.AddUsers(&vCore.AddUsersParams{

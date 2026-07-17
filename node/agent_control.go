@@ -20,7 +20,17 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-func newAgentControlClient(apiConfig *conf.ApiConfig, controller *Controller, core vCore.Core, pluginSupervisorEnabled bool) (*agentapi.Client, error) {
+// newAgentControlClientForSupervisor binds the control stream to the
+// node-scoped Supervisor selected after registration.  The pointer is kept in
+// the controller's operation handler as well, so a duplicate configuration
+// for another node can never route plugin operations through a shared runtime.
+func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *Controller, core vCore.Core, supervisor *plugin.Supervisor) (*agentapi.Client, error) {
+	if controller == nil {
+		return nil, fmt.Errorf("agent control node configuration is missing")
+	}
+	if controller.pluginSupervisor != supervisor {
+		return nil, fmt.Errorf("agent control Supervisor does not match controller node scope")
+	}
 	if apiConfig == nil || controller == nil {
 		return nil, fmt.Errorf("agent control node configuration is missing")
 	}
@@ -44,7 +54,7 @@ func newAgentControlClient(apiConfig *conf.ApiConfig, controller *Controller, co
 		ServerName:   serverName,
 		AgentVersion: panel.Version,
 		InstanceID:   fmt.Sprintf("%s-%d-%d", hostname, os.Getpid(), nodeID),
-		Capabilities: agentCapabilities(core, pluginSupervisorEnabled),
+		Capabilities: agentCapabilities(core, supervisor != nil),
 		Labels: map[string]string{
 			"core":      core.Type(),
 			"node_type": apiConfig.NodeType,

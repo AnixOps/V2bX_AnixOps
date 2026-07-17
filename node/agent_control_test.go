@@ -1,10 +1,6 @@
 package node
 
 import (
-	"context"
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -138,37 +134,5 @@ func TestAgentCapabilitiesAdvertisePluginOperationsOnlyWhenEnabled(t *testing.T)
 		if !contains(current, name) {
 			t.Fatalf("plugin-enabled Agent did not advertise %s", name)
 		}
-	}
-}
-
-func TestNewPluginSupervisorRequiresOneConsistentOptIn(t *testing.T) {
-	publicKey, _, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key := base64.StdEncoding.EncodeToString(publicKey)
-	nodes := []conf.NodeConfig{{ApiConfig: conf.ApiConfig{
-		PluginSupervisorEnabled: true,
-		PluginRoot:              t.TempDir(),
-		PluginOfficialPublicKey: key,
-	}}}
-	supervisor, err := newPluginSupervisor(nodes)
-	if err != nil {
-		t.Fatalf("newPluginSupervisor() error = %v", err)
-	}
-	if supervisor == nil {
-		t.Fatal("newPluginSupervisor() returned nil for explicit opt-in")
-	}
-	if err := supervisor.Close(context.Background()); err != nil {
-		t.Fatalf("close plugin supervisor: %v", err)
-	}
-
-	nodes = append(nodes, conf.NodeConfig{ApiConfig: conf.ApiConfig{
-		PluginSupervisorEnabled: true,
-		PluginRoot:              t.TempDir(),
-		PluginOfficialPublicKey: key,
-	}})
-	if _, err := newPluginSupervisor(nodes); err == nil || !strings.Contains(err.Error(), "same root") {
-		t.Fatalf("newPluginSupervisor() inconsistent config error = %v", err)
 	}
 }

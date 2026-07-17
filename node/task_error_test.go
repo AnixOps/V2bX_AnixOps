@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
@@ -11,6 +12,7 @@ import (
 	"github.com/AnixOps/anix-agent/v4/common/monitor"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
+	"github.com/AnixOps/anix-agent/v4/limiter"
 )
 
 var _ apiclient.NodeAPI = (*errorTestNodeAPI)(nil)
@@ -45,15 +47,20 @@ func (f *errorTestNodeAPI) SupportsSync() bool                        { return f
 func (f *errorTestNodeAPI) Close() error                              { return nil }
 
 type errorTestCore struct {
-	delNodeErr  error
-	delUsersErr error
+	addNodeErr   error
+	delNodeErr   error
+	delUsersErr  error
+	delNodeCalls int
 }
 
 func (f *errorTestCore) Start() error                                         { return nil }
 func (f *errorTestCore) Close() error                                         { return nil }
-func (f *errorTestCore) AddNode(string, *panel.NodeInfo, *conf.Options) error { return nil }
-func (f *errorTestCore) DelNode(string) error                                 { return f.delNodeErr }
-func (f *errorTestCore) AddUsers(*vCore.AddUsersParams) (int, error)          { return 0, nil }
+func (f *errorTestCore) AddNode(string, *panel.NodeInfo, *conf.Options) error { return f.addNodeErr }
+func (f *errorTestCore) DelNode(string) error {
+	f.delNodeCalls++
+	return f.delNodeErr
+}
+func (f *errorTestCore) AddUsers(*vCore.AddUsersParams) (int, error) { return 0, nil }
 func (f *errorTestCore) GetUserTrafficSlice(string, bool) ([]panel.UserTraffic, error) {
 	return nil, nil
 }
@@ -89,6 +96,54 @@ func TestNodeInfoMonitorReturnsFetchErrors(t *testing.T) {
 				t.Fatalf("nodeInfoMonitor() error = %v, want wrapping %v", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestControllerEarlyStartFailureClosesWithoutDeletingMissingCoreNode(t *testing.T) {
+	fetchErr := errors.New("node fetch failed")
+	controller := &Controller{
+		apiClient: &errorTestNodeAPI{nodeErr: fetchErr},
+		server:    &errorTestCore{delNodeErr: errors.New("DelNode must not run")},
+		Options:   &conf.Options{},
+	}
+
+	if err := controller.Start(); err == nil || !strings.Contains(err.Error(), fetchErr.Error()) {
+		t.Fatalf("Controller.Start() error = %v, want containing %v", err, fetchErr)
+	}
+	if err := controller.Close(); err != nil {
+		t.Fatalf("Controller.Close() after early failure = %v, want nil", err)
+	}
+}
+
+func TestControllerReloadFailureDoesNotDeleteMissingCoreNodeTwice(t *testing.T) {
+	limiter.Init()
+	addErr := errors.New("replacement add failed")
+	core := &errorTestCore{addNodeErr: addErr}
+	api := &errorTestNodeAPI{node: &panel.NodeInfo{Id: 1, Type: "vless"}, alive: map[int]int{}}
+	controller := &Controller{
+		apiClient: api,
+		server:    core,
+		tag:       "fixed-tag",
+		Options:   &conf.Options{Name: "fixed-tag"},
+		nodeAdded: true,
+		userList:  []panel.UserInfo{},
+		aliveMap:  map[int]int{},
+	}
+	controller.limiter = limiter.AddLimiter(controller.tag, &controller.LimitConfig, controller.userList, controller.aliveMap)
+	controller.limiterAdded = true
+
+	err := controller.reloadNode(&panel.NodeInfo{Id: 1, Type: "vless"})
+	if !errors.Is(err, addErr) {
+		t.Fatalf("reloadNode() error = %v, want %v", err, addErr)
+	}
+	if core.delNodeCalls != 1 {
+		t.Fatalf("DelNode calls after reload failure = %d, want 1", core.delNodeCalls)
+	}
+	if err := controller.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if core.delNodeCalls != 1 {
+		t.Fatalf("DelNode calls after Close = %d, want still 1", core.delNodeCalls)
 	}
 }
 

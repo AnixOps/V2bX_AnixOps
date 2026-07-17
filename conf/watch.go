@@ -5,6 +5,7 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
@@ -36,6 +37,7 @@ func (p *Conf) Watch(filePath, xDnsPath string, sDnsPath string, reload func()) 
 		}
 	}
 
+	var reloadMu sync.Mutex
 	go func() {
 		var pre time.Time
 		defer watcher.Close()
@@ -51,17 +53,21 @@ func (p *Conf) Watch(filePath, xDnsPath string, sDnsPath string, reload func()) 
 				pre = time.Now()
 				go func() {
 					time.Sleep(5 * time.Second)
+					reloadMu.Lock()
+					defer reloadMu.Unlock()
 					switch filepath.Base(strings.TrimSuffix(e.Name, "~")) {
 					case filepath.Base(xDnsPath), filepath.Base(sDnsPath):
 						log.Println("DNS file changed, reloading...")
 					default:
 						log.Println("config file changed, reloading...")
 					}
-					*p = *New()
-					err := p.LoadFromPath(filePath)
+					next := New()
+					err := next.LoadFromPath(filePath)
 					if err != nil {
 						log.Printf("reload config error: %s", err)
+						return
 					}
+					*p = *next
 					reload()
 					log.Println("reload config success")
 				}()
