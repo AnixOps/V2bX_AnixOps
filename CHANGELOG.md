@@ -4,6 +4,43 @@
 
 No changes yet.
 
+## 4.0.0-alpha.3 - 2026-07-17
+
+### Changed
+
+- Isolated every enabled official-plugin Supervisor by the final registered
+  node ID. Fresh installations now keep plugin artifacts, operation journals,
+  runtime state, and Unix sockets below a node-specific `nodes/<node_id>`
+  namespace, so two nodes in one Agent process cannot share plugin state.
+- Bound each node-scoped Supervisor and Agent Control stream to the same
+  Control endpoint, TLS identity, and API-key fingerprint. Configurations that
+  reuse a numeric node ID across different Controls now fail closed instead of
+  mixing credentials or routing operations to another node's Supervisor.
+- Preserved an existing non-namespaced Supervisor layout for a true
+  single-node upgrade when legacy plugin state or sockets are present. A fresh
+  single-node installation uses the namespaced layout; multi-node startup
+  rejects ambiguous legacy state and requires an explicit migration.
+
+### Fixed
+
+- Made controller startup and teardown track acquired limiter and core-node
+  resources independently, preventing cleanup of resources that were never
+  created after a partial failure and preserving deterministic retry behavior.
+- Serialized Agent lifecycle and file-watcher reload transactions. A failed
+  configuration load leaves the active configuration unchanged, while staged
+  controller cleanup prevents leaked or double-removed resources during
+  restart and reload failures.
+- Bounded Supervisor shutdown per node and changed aggregate close failures
+  from process panics to explicit error logs, so a stuck plugin cannot block a
+  configuration reload indefinitely or crash the Agent teardown path.
+
+### Known Gaps
+
+- This remains an opt-in alpha Supervisor release. Declarative topology apply,
+  Secret-ID materialization, composed GOST-to-NAT deployment, and sustained
+  production canary evidence are not complete; production traffic cutover is
+  not implied by this release.
+
 ## 4.0.0-alpha.2 - 2026-07-17
 
 ### Fixed

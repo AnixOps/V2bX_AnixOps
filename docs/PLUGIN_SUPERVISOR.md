@@ -18,9 +18,32 @@ Add the following fields to the node `ApiConfig` that owns the physical Agent:
 }
 ```
 
-All enabled node entries in one process must use the same root, socket
-directory, and trust root. A plugin artifact must be an Agent-targeted manifest
-published by `AnixOps`, signed with that key, and match its SHA-256 digest.
+`PluginRoot` and `PluginSocketDir` are base directories. On a fresh install,
+each final registered node ID receives a separate Supervisor namespace:
+
+```text
+PluginRoot/nodes/<node_id>
+PluginSocketDir/nodes/<node_id>
+```
+
+When `PluginSocketDir` is omitted, sockets use
+`PluginRoot/nodes/<node_id>/sockets`. The namespace owns that node's installed
+artifacts, operation journal, runtime state, and sockets. A repeated config
+entry for the same node may reuse its Supervisor only when the root, socket
+directory, trust root, and Control identity match exactly. The Control identity
+includes the API and gRPC endpoints, TLS settings, server name, and an API-key
+fingerprint; the raw API key is not stored in the identity. Reusing one numeric
+node ID across different Controls fails closed.
+
+An upgrade of a true single-node Agent preserves the old non-namespaced root
+and socket directory when existing plugin state or sockets are detected. A
+fresh single-node Agent uses the namespaced layout. Multi-node startup refuses
+ambiguous legacy state instead of silently treating it as empty; operators must
+migrate that state into the intended `nodes/<node_id>` directory before
+enabling multiple Supervisors.
+
+A plugin artifact must be an Agent-targeted manifest published by `AnixOps`,
+signed with that key, and match its SHA-256 digest.
 An omitted `architectures` list remains compatible with early manifests;
 otherwise entries use `arch`, `os/arch`, or `os-arch` (with `any` for a
 portable artifact) and must include the current Agent platform. Dependencies
@@ -29,7 +52,9 @@ rejected. Entrypoints must be canonical relative paths.
 
 ## Runtime Contract
 
-Each installed version is retained under `PluginRoot/<plugin>/<version>`.
+Each installed version is retained under the selected node namespace at
+`<node-root>/<plugin>/<version>` (the legacy single-node layout keeps
+`PluginRoot/<plugin>/<version>`).
 `plugin.install` accepts the strict `anixops.io/plugin-install/v1alpha1`
 descriptor from the Agent Control stream. Its manifest and artifact URLs must
 be exact same-origin `/api/v3/agent/plugin-releases/<plugin>/<version>/...`
@@ -77,8 +102,9 @@ Declarations for other platforms remain in the signed package but are not
 materialized on this Agent.
 
 Selected files are installed as
-`PluginRoot/<plugin>/<version>/runtime/<name>` with mode `0750`. Plugins locate
-them relative to their own materialized executable. Before every process
+`<node-root>/<plugin>/<version>/runtime/<name>` with mode `0750` (or the
+equivalent legacy single-node path). Plugins locate them relative to their own
+materialized executable. Before every process
 start, the Supervisor re-verifies the package digest and compares every
 selected runtime byte-for-byte with its signed package member. Missing,
 non-regular, non-executable, oversized, or modified runtime files fail closed
@@ -88,14 +114,14 @@ auxiliary runtimes; they must use a packaged Agent entrypoint.
 The signed executable receives:
 
 ```text
---anixops-socket /run/anixops/plugins/<plugin>.sock
---anixops-config /var/lib/anixops/plugins/<plugin>/<version>/config.json
+--anixops-socket /run/anixops/plugins/nodes/<node_id>/<plugin>.sock
+--anixops-config /var/lib/anixops/plugins/nodes/<node_id>/<plugin>/<version>/config.json
 ```
 
 A manifest that declares `plugin.runtime-state` also receives:
 
 ```text
---anixops-state /var/lib/anixops/plugins/<plugin>/runtime-state/ownership.json
+--anixops-state /var/lib/anixops/plugins/nodes/<node_id>/<plugin>/runtime-state/ownership.json
 ```
 
 The state path is stable across plugin-version and Agent-process changes. A
