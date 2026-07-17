@@ -6,7 +6,6 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 MODULE_PATH="github.com/AnixOps/anix-agent/v4"
 PROTO_FILES=(
   "api/grpc/v2board.proto"
-  "api/grpc/agent/v1/agent.proto"
 )
 
 cd "${REPO_ROOT}"
@@ -25,4 +24,4 @@ protoc \
   --go-grpc_opt="module=${MODULE_PATH}" \
   "${PROTO_FILES[@]}"
 
-echo "Generated legacy and AnixOps Agent gRPC bindings."
+echo "Generated legacy gRPC bindings."

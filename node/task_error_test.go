@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	apiclient "github.com/AnixOps/anix-agent/v4/api/client"
-	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
+	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/common/monitor"
 	"github.com/AnixOps/anix-agent/v4/conf"

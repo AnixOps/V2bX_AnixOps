@@ -80,5 +80,5 @@ jobs:
         shell: bash
         run: |
           bash api/grpc/gen.sh
-          git diff --exit-code -- api/grpc/v2boardpb api/grpc/agent/v1
-          test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb api/grpc/agent/v1)"
+          git diff --exit-code -- api/grpc/v2boardpb
+          test -z "$(git ls-files --others --exclude-standard -- api/grpc/v2boardpb)"

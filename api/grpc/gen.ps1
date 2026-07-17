@@ -3,8 +3,7 @@ param()
 $ErrorActionPreference = "Stop"
 $ModulePath = "github.com/AnixOps/anix-agent/v4"
 $ProtoFiles = @(
-    "api/grpc/v2board.proto",
-    "api/grpc/agent/v1/agent.proto"
+    "api/grpc/v2board.proto"
 )
 
 foreach ($CommandName in @("protoc", "protoc-gen-go", "protoc-gen-go-grpc")) {
@@ -23,7 +22,7 @@ try {
         "--go-grpc_opt=module=$ModulePath" `
         $ProtoFiles
 
-    Write-Host "Generated legacy and AnixOps Agent gRPC bindings."
+    Write-Host "Generated legacy gRPC bindings."
 }
 finally {
     Pop-Location

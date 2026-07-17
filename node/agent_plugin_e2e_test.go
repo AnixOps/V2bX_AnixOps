@@ -24,8 +24,9 @@ import (
 	"testing"
 	"time"
 
+	agentcontrol "github.com/AnixOps/anix-agent/sdk/agentcontrol"
+	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
-	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	"github.com/AnixOps/anix-agent/v4/plugin"
 	"github.com/AnixOps/anix-agent/v4/plugin/machinetelemetry"
@@ -249,12 +250,7 @@ func waitE2EOperation(stream agentv1pb.AgentControlService_ControlStreamServer, 
 }
 
 func hasE2ECapability(capabilities []*agentv1pb.Capability, name, version string) bool {
-	for _, capability := range capabilities {
-		if capability != nil && capability.Name == name && capability.Version == version {
-			return true
-		}
-	}
-	return false
+	return agentcontrol.HasCapabilityVersion(capabilities, name, version)
 }
 
 func e2eOperationEnvelope(operationID, idempotencyKey, sessionID string, revision uint64, pluginID, targetVersion string, config []byte) []byte {
@@ -346,8 +342,8 @@ func TestAgentClientControllerSupervisorMachineTelemetryE2E(t *testing.T) {
 		Target: listener.Addr().String(), NodeID: int(agentPluginE2ENodeID), APIKey: agentPluginE2EAPIKey,
 		AgentVersion: "machine-e2e-agent", InstanceID: "machine-e2e-instance",
 		Capabilities: []*agentv1pb.Capability{
-			{Name: "agent.control", Version: "v1"}, {Name: "operation.cancel", Version: "v1"},
-			{Name: "plugin.configure", Version: "v1"}, {Name: "plugin.enable", Version: "v1"}, {Name: "plugin.health", Version: "v1"},
+			{Name: "agent.control", Version: agentcontrol.CapabilityVersionV1}, {Name: "operation.cancel", Version: agentcontrol.CapabilityVersionV1},
+			{Name: "plugin.configure", Version: agentcontrol.CapabilityVersionV1}, {Name: "plugin.enable", Version: agentcontrol.CapabilityVersionV1}, {Name: "plugin.health", Version: agentcontrol.CapabilityVersionV1},
 		},
 		Handler: agentapi.OperationHandlerFunc(func(ctx context.Context, operation *agentv1pb.DesiredOperation) (json.RawMessage, error) {
 			handlerCalls.Add(1)

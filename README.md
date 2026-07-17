@@ -234,8 +234,8 @@ $env:ALLOW_LOCAL_BUILD="1"
 
 ```bash
 GOEXPERIMENT=jsonv2 GOWORK=off go test ./...
-bash api/grpc/gen.sh
-git diff --exit-code -- api/grpc/v2boardpb api/grpc/agent/v1
+cd sdk && bash api/grpc/gen.sh && git diff --exit-code -- api/grpc/agent/v1
+cd .. && bash api/grpc/gen.sh && git diff --exit-code -- api/grpc/v2boardpb
 ```
 
 ## 文档

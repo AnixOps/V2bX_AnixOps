@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
+	agentcontrol "github.com/AnixOps/anix-agent/sdk/agentcontrol"
+	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
 	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
-	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
 	"github.com/AnixOps/anix-agent/v4/api/panel"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	vCore "github.com/AnixOps/anix-agent/v4/core"
@@ -165,23 +166,23 @@ func agentControlTargetHost(target string) string {
 
 func agentCapabilities(core vCore.Core, pluginSupervisorEnabled bool) []*agentv1pb.Capability {
 	capabilities := []*agentv1pb.Capability{
-		{Name: "agent.control", Version: "v1"},
-		{Name: "operation.cancel", Version: "v1"},
-		{Name: "agent.ping", Version: "v1"},
-		{Name: "node.reload", Version: "v1"},
-		{Name: "users.reload", Version: "v1"},
-		{Name: "core." + core.Type(), Version: "v1"},
+		{Name: "agent.control", Version: agentcontrol.CapabilityVersionV1},
+		{Name: "operation.cancel", Version: agentcontrol.CapabilityVersionV1},
+		{Name: "agent.ping", Version: agentcontrol.CapabilityVersionV1},
+		{Name: "node.reload", Version: agentcontrol.CapabilityVersionV1},
+		{Name: "users.reload", Version: agentcontrol.CapabilityVersionV1},
+		{Name: "core." + core.Type(), Version: agentcontrol.CapabilityVersionV1},
 	}
 	for _, protocol := range core.Protocols() {
 		capabilities = append(capabilities, &agentv1pb.Capability{
 			Name:    "proxy.protocol." + strings.ToLower(protocol),
-			Version: "v1",
+			Version: agentcontrol.CapabilityVersionV1,
 		})
 	}
 	if pluginSupervisorEnabled {
-		capabilities = append(capabilities, &agentv1pb.Capability{Name: "kernel.observed-state", Version: "v1"})
+		capabilities = append(capabilities, &agentv1pb.Capability{Name: "kernel.observed-state", Version: agentcontrol.CapabilityVersionV1})
 		for _, operation := range []string{"plugin.install", "plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health"} {
-			capabilities = append(capabilities, &agentv1pb.Capability{Name: operation, Version: "v1"})
+			capabilities = append(capabilities, &agentv1pb.Capability{Name: operation, Version: agentcontrol.CapabilityVersionV1})
 		}
 	}
 	return capabilities
