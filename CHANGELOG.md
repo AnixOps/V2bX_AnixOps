@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 4.0.0-alpha.7 - 2026-07-18
+
+### Changed
+
+- Release metadata now pairs this Agent build with the Control security-gate
+  fixes required before the next canary candidate. No Agent runtime behavior
+  changed from `4.0.0-alpha.6`.
+
 ## 4.0.0-alpha.6 - 2026-07-18
 
 ### Added

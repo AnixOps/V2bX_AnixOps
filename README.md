@@ -23,12 +23,12 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 
 ## 4.0 Alpha 范围
 
-`v4.0.0-alpha.6` 提供 AnixOps 官方签名软件包、WebUI 生命周期操作、真实
+`v4.0.0-alpha.7` 提供 AnixOps 官方签名软件包、WebUI 生命周期操作、真实
 machine-telemetry 指标，以及 crash-safe `nftables-forward` 1.2.0。该版本把
 live nftables ruleset fingerprint 和 per-rule counter 作为受限 heartbeat evidence
 上报，但不是“所有任务已经全部迁移”的稳定版。新控制流
 通过 `AgentControlEnabled` 显式启用，用于握手、能力上报、心跳、受限操作、ACK
-和观察状态；`PluginSupervisorEnabled` 再独立启用官方包安装与运行。alpha.6
+和观察状态；`PluginSupervisorEnabled` 再独立启用官方包安装与运行。alpha.7
 在 alpha.4 的 telemetry RPC、心跳指标和可重试生命周期关闭基础上，增加
 nftables ownership journal、签名 cleanup/validate 入口和进程崩溃恢复；全新安装使用
 `nodes/<node_id>` 状态目录，已有状态的单节点升级继续读取旧布局。现有
@@ -96,7 +96,7 @@ FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v4.0.0-alpha.6
+export VERSION=v4.0.0-alpha.7
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -124,7 +124,7 @@ anix-agent server -c /etc/anixops/agent/config.json
 ```
 
 安装器接受稳定版以及 `alpha`、`beta`、`rc` 预发布 tag，例如
-`v4.0.0-alpha.6`、`v4.0.0-beta.1` 和 `v4.0.0-rc.1`。
+`v4.0.0-alpha.7`、`v4.0.0-beta.1` 和 `v4.0.0-rc.1`。
 
 ## 从 V2bX_AnixOps 升级
 
