@@ -62,6 +62,12 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 		},
 		KeepaliveTime: keepaliveTime,
 		Handler:       agentapi.OperationHandlerFunc(controller.handleAgentOperation),
+		MetricsProvider: func(ctx context.Context) (map[string]float64, error) {
+			if supervisor == nil {
+				return nil, nil
+			}
+			return supervisor.TelemetryMetrics(ctx)
+		},
 	})
 }
 

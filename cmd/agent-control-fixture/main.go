@@ -51,7 +51,7 @@ func main() {
 		fatal(errors.New("target, node-id, api-key, ready-file, and result-file are required"))
 	}
 
-	operationHandler, capabilities, closePlugins, err := newOperationHandler(pluginFixtureConfig{
+	operationHandler, capabilities, metricsProvider, closePlugins, err := newOperationHandler(pluginFixtureConfig{
 		RootDir: *pluginRoot, SocketDir: *pluginSockets, PublicKey: *pluginPublicKey,
 		BaseURL: *pluginBaseURL, APIKey: *apiKey, ResultFile: *resultFile,
 	})
@@ -74,7 +74,7 @@ func main() {
 		Capabilities: capabilities,
 		ReconnectMin: 20 * time.Millisecond, ReconnectMax: 100 * time.Millisecond,
 		Heartbeat: 5 * time.Second, DialTimeout: 3 * time.Second, HandshakeTimeout: 3 * time.Second,
-		Handler: operationHandler,
+		Handler: operationHandler, MetricsProvider: metricsProvider,
 	})
 	if err != nil {
 		fatal(err)
@@ -122,7 +122,7 @@ type pluginFixtureConfig struct {
 	ResultFile string
 }
 
-func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler, []*agentv1pb.Capability, func(context.Context) error, error) {
+func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler, []*agentv1pb.Capability, func(context.Context) (map[string]float64, error), func(context.Context) error, error) {
 	capabilities := []*agentv1pb.Capability{
 		{Name: "agent.control", Version: "v1"},
 		{Name: "operation.cancel", Version: "v1"},
@@ -151,27 +151,27 @@ func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler,
 				return nil, err
 			}
 			return json.RawMessage(`{"fixture":"agent-control","status":"ok"}`), nil
-		}), capabilities, nil, nil
+		}), capabilities, nil, nil, nil
 	}
 	if config.RootDir == "" || config.SocketDir == "" || config.PublicKey == "" || config.BaseURL == "" {
-		return nil, nil, nil, errors.New("plugin-root, plugin-socket-dir, plugin-public-key, and plugin-base-url are all required in plugin mode")
+		return nil, nil, nil, nil, errors.New("plugin-root, plugin-socket-dir, plugin-public-key, and plugin-base-url are all required in plugin mode")
 	}
 	decodedKey, err := base64.StdEncoding.DecodeString(config.PublicKey)
 	if err != nil || len(decodedKey) != ed25519.PublicKeySize {
-		return nil, nil, nil, errors.New("plugin-public-key must be a base64 Ed25519 public key")
+		return nil, nil, nil, nil, errors.New("plugin-public-key must be a base64 Ed25519 public key")
 	}
 	supervisor, err := plugin.NewSupervisor(plugin.Config{
 		RootDir: config.RootDir, SocketDir: config.SocketDir, PublicKey: ed25519.PublicKey(decodedKey),
 	})
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	installer, err := plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{
 		Supervisor: supervisor, BaseURL: config.BaseURL, APIKey: config.APIKey,
 	})
 	if err != nil {
 		_ = supervisor.Close(context.Background())
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	capabilities = capabilities[:2]
 	for _, name := range []string{
@@ -190,7 +190,7 @@ func newOperationHandler(config pluginFixtureConfig) (agentapi.OperationHandler,
 		}
 		return supervisor.Handle(ctx, operation.Kind, envelope)
 	})
-	return handler, capabilities, supervisor.Close, nil
+	return handler, capabilities, supervisor.TelemetryMetrics, supervisor.Close, nil
 }
 
 func writeJSONAtomically(path string, value any) error {

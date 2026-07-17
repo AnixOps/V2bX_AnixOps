@@ -6,7 +6,9 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"math"
 	mathrand "math/rand"
 	"runtime"
 	"strconv"
@@ -34,9 +36,11 @@ const (
 	defaultHandshakeTimeout = 10 * time.Second
 	operationQueueSize      = 32
 	completedCacheSize      = 256
+	metricsProviderTimeout  = 2 * time.Second
 	operationCancelKind     = "operation.cancel"
 	operationCancelledText  = "operation cancelled"
 	operationNotRunningText = "operation cancelled/not running"
+	operationDeadlineText   = "operation deadline exceeded"
 )
 
 type OperationHandler interface {
@@ -68,9 +72,13 @@ type Config struct {
 	DialTimeout      time.Duration
 	HandshakeTimeout time.Duration
 	Handler          OperationHandler
-	DialContext      DialContextFunc
-	DialOptions      []grpc.DialOption
-	Rand             *mathrand.Rand
+	// MetricsProvider optionally contributes bounded scalar metrics to the
+	// Agent Control heartbeat. A provider failure is logged and does not block
+	// the control stream or suppress the built-in metrics.
+	MetricsProvider func(context.Context) (map[string]float64, error)
+	DialContext     DialContextFunc
+	DialOptions     []grpc.DialOption
+	Rand            *mathrand.Rand
 }
 
 type Client struct {
@@ -236,6 +244,7 @@ type sessionOperationState struct {
 	running   map[string]*runningOperation
 	queued    map[string]uint64
 	cancelled map[string]uint64
+	expired   map[string]uint64
 	closed    bool
 }
 
@@ -250,6 +259,7 @@ func newSessionOperationState() *sessionOperationState {
 		running:   make(map[string]*runningOperation),
 		queued:    make(map[string]uint64),
 		cancelled: make(map[string]uint64),
+		expired:   make(map[string]uint64),
 	}
 }
 
@@ -266,6 +276,9 @@ func (s *sessionOperationState) queue(operation *agentv1pb.DesiredOperation) boo
 		return true
 	}
 	if revision, ok := s.cancelled[operation.OperationId]; ok && revision == operation.Revision {
+		return true
+	}
+	if revision, ok := s.expired[operation.OperationId]; ok && revision == operation.Revision {
 		return true
 	}
 	s.queued[operation.OperationId] = operation.Revision
@@ -300,9 +313,37 @@ func (s *sessionOperationState) begin(parent context.Context, operation *agentv1
 	if revision, ok := s.cancelled[operation.OperationId]; ok && revision == operation.Revision {
 		return parent, func() {}, true
 	}
+	if operationDeadlineExceeded(operation, time.Now()) {
+		// Keep the marker until executeOperation emits the terminal observation.
+		// This distinguishes an expired queued operation from an explicit cancel
+		// without changing the existing three-value begin contract.
+		s.expired[operation.OperationId] = operation.Revision
+		return parent, func() {}, true
+	}
 	operationCtx, cancel := context.WithCancel(parent)
 	s.running[operation.OperationId] = &runningOperation{revision: operation.Revision, cancel: cancel}
 	return operationCtx, cancel, false
+}
+
+func (s *sessionOperationState) wasExpired(operation *agentv1pb.DesiredOperation) bool {
+	if s == nil || operation == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	revision, ok := s.expired[operation.OperationId]
+	return ok && revision == operation.Revision
+}
+
+func (s *sessionOperationState) finishExpired(operation *agentv1pb.DesiredOperation) {
+	if s == nil || operation == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if revision, ok := s.expired[operation.OperationId]; ok && revision == operation.Revision {
+		delete(s.expired, operation.OperationId)
+	}
 }
 
 // requestCancel records a cancellation for an accepted queued operation, or
@@ -362,6 +403,9 @@ func (s *sessionOperationState) finishCancellation(operation *agentv1pb.DesiredO
 	if revision, ok := s.cancelled[operation.OperationId]; ok && revision == operation.Revision {
 		delete(s.cancelled, operation.OperationId)
 	}
+	if revision, ok := s.expired[operation.OperationId]; ok && revision == operation.Revision {
+		delete(s.expired, operation.OperationId)
+	}
 }
 
 func (s *sessionOperationState) finish(operation *agentv1pb.DesiredOperation) bool {
@@ -395,6 +439,7 @@ func (s *sessionOperationState) close() {
 	s.running = make(map[string]*runningOperation)
 	s.queued = make(map[string]uint64)
 	s.cancelled = make(map[string]uint64)
+	s.expired = make(map[string]uint64)
 	s.mu.Unlock()
 	for _, cancel := range cancels {
 		cancel()
@@ -592,6 +637,12 @@ func (c *Client) acceptOperation(stream agentv1pb.AgentControlService_ControlStr
 		}
 		return c.sendObserved(stream, sessionID, completed)
 	}
+	if operationDeadlineExceeded(operation, time.Now()) {
+		if err := c.sendOperationAck(stream, sessionID, operation, true, ""); err != nil {
+			return err
+		}
+		return c.completeFailedOperation(stream, sessionID, operation, operationDeadlineText)
+	}
 	if operation.Revision <= c.observedRevision.Load() {
 		if err := c.sendOperationAck(stream, sessionID, operation, true, ""); err != nil {
 			return err
@@ -660,13 +711,26 @@ func (c *Client) executeOperation(parent context.Context, stream agentv1pb.Agent
 	if operation == nil {
 		return
 	}
+	if parent == nil {
+		parent = context.Background()
+	}
 	operationCtx, cancel, cancelled := operations.begin(parent, operation)
 	if cancelled {
-		_ = c.completeCancelledOperation(stream, sessionID, operation, operationCancelledText)
-		operations.finishCancellation(operation)
+		if operations.wasExpired(operation) {
+			_ = c.completeFailedOperation(stream, sessionID, operation, operationDeadlineText)
+			operations.finishExpired(operation)
+		} else {
+			_ = c.completeCancelledOperation(stream, sessionID, operation, operationCancelledText)
+			operations.finishCancellation(operation)
+		}
 		return
 	}
 	defer cancel()
+	if operationDeadlineExceeded(operation, time.Now()) {
+		operations.finish(operation)
+		_ = c.completeFailedOperation(stream, sessionID, operation, operationDeadlineText)
+		return
+	}
 	if operation.Revision <= c.observedRevision.Load() {
 		operations.finish(operation)
 		terminal := &agentv1pb.ObservedState{
@@ -698,8 +762,18 @@ func (c *Client) executeOperation(parent context.Context, stream agentv1pb.Agent
 		defer deadlineCancel()
 	}
 	operationCtx = withOperationSession(operationCtx, sessionID)
+	if err := operationCtx.Err(); err != nil {
+		operations.finish(operation)
+		message := err.Error()
+		if errors.Is(err, context.DeadlineExceeded) || operationDeadlineExceeded(operation, time.Now()) {
+			message = operationDeadlineText
+		}
+		_ = c.completeFailedOperation(stream, sessionID, operation, message)
+		return
+	}
 	state, err := c.config.Handler.HandleOperation(operationCtx, proto.Clone(operation).(*agentv1pb.DesiredOperation))
 	wasCancelled := operations.finish(operation)
+	deadlineExceeded := operationDeadlineExceeded(operation, time.Now()) || errors.Is(operationCtx.Err(), context.DeadlineExceeded)
 
 	terminal := &agentv1pb.ObservedState{
 		OperationId:      operation.OperationId,
@@ -711,6 +785,13 @@ func (c *Client) executeOperation(parent context.Context, stream agentv1pb.Agent
 	if wasCancelled {
 		terminal.Phase = agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED
 		terminal.Message = operationCancelledText
+		terminal.StateJson = nil
+	} else if deadlineExceeded {
+		// Deadline is authoritative even when a handler returns its own error
+		// after the context has expired. Keep the wire result canonical so the
+		// Control state machine cannot split one timeout into failed vs timed_out.
+		terminal.Phase = agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED
+		terminal.Message = operationDeadlineText
 		terminal.StateJson = nil
 	} else if err != nil {
 		terminal.Phase = agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED
@@ -734,7 +815,41 @@ func (c *Client) completeCancelledOperation(stream agentv1pb.AgentControlService
 	return c.sendObserved(stream, sessionID, terminal)
 }
 
+func (c *Client) completeFailedOperation(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, operation *agentv1pb.DesiredOperation, message string) error {
+	terminal := &agentv1pb.ObservedState{
+		OperationId:      operation.OperationId,
+		Revision:         operation.Revision,
+		Phase:            agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED,
+		Message:          message,
+		ObservedAtUnixMs: time.Now().UnixMilli(),
+	}
+	c.storeObservedRevision(operation.Revision)
+	c.rememberCompleted(terminal)
+	return c.sendObserved(stream, sessionID, terminal)
+}
+
+func operationDeadlineExceeded(operation *agentv1pb.DesiredOperation, now time.Time) bool {
+	return operation != nil && operation.DeadlineUnixMs > 0 && !now.Before(time.UnixMilli(operation.DeadlineUnixMs))
+}
+
 func (c *Client) sendHeartbeat(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, startedAt time.Time) error {
+	metrics := map[string]float64{
+		"go_goroutines": float64(runtime.NumGoroutine()),
+	}
+	if c.config.MetricsProvider != nil {
+		providerCtx, cancel := context.WithTimeout(c.ctx, metricsProviderTimeout)
+		provided, err := c.config.MetricsProvider(providerCtx)
+		cancel()
+		for key, value := range provided {
+			if strings.TrimSpace(key) == "" || math.IsNaN(value) || math.IsInf(value, 0) {
+				continue
+			}
+			metrics[key] = value
+		}
+		if err != nil {
+			log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID, "error": err}).Warn("metrics provider failed")
+		}
+	}
 	return c.send(stream, &agentv1pb.AgentToControl{
 		RequestId:    newID("heartbeat"),
 		NodeId:       uint32(c.config.NodeID),
@@ -745,9 +860,7 @@ func (c *Client) sendHeartbeat(stream agentv1pb.AgentControlService_ControlStrea
 				SessionId:        sessionID,
 				UptimeSeconds:    int64(time.Since(startedAt) / time.Second),
 				ObservedRevision: c.observedRevision.Load(),
-				Metrics: map[string]float64{
-					"go_goroutines": float64(runtime.NumGoroutine()),
-				},
+				Metrics:          metrics,
 			},
 		},
 	})

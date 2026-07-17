@@ -1213,6 +1213,78 @@ func TestConcurrentDuplicateOperationStartsOnce(t *testing.T) {
 	require.NoError(t, supervisor.Close(context.Background()))
 }
 
+func TestPluginLockWaitHonorsOperationDeadline(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	runner := &fakeRunner{}
+	health := &blockingHealth{entered: make(chan struct{}), release: make(chan struct{})}
+	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: runner, Health: health})
+	require.NoError(t, err)
+	require.NoError(t, func() error {
+		_, installErr := supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("deadline-lock"), "wireguard", "1.0.0"))
+		return installErr
+	}())
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, firstErr := supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("deadline-lock-first", "wireguard", "1.0.0", 1, []byte(`{}`)))
+		firstDone <- firstErr
+	}()
+	select {
+	case <-health.entered:
+	case <-time.After(time.Second):
+		t.Fatal("first operation did not reach the plugin health check")
+	}
+
+	secondCtx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	_, secondErr := supervisor.Handle(secondCtx, "plugin.enable", testEnvelope("deadline-lock-second", "wireguard", "1.0.0", 2, []byte(`{}`)))
+	require.ErrorIs(t, secondErr, context.DeadlineExceeded)
+	close(health.release)
+	require.NoError(t, <-firstDone)
+
+	stateJSON, inspectErr := supervisor.inspect("wireguard")
+	require.NoError(t, inspectErr)
+	var state PluginState
+	require.NoError(t, json.Unmarshal(stateJSON, &state))
+	require.Equal(t, uint64(1), state.ObservedRevision)
+	require.NoError(t, supervisor.Close(context.Background()))
+}
+
+func TestSupervisorCloseHonorsDeadlineWhileOperationIsActive(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	health := &blockingHealth{entered: make(chan struct{}), release: make(chan struct{})}
+	supervisor, err := NewSupervisor(Config{
+		RootDir: t.TempDir(), SocketDir: shortSocketDir(t), PublicKey: publicKey,
+		Runner: &fakeRunner{}, Health: health,
+	})
+	require.NoError(t, err)
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("close-deadline"), "wireguard", "1.0.0"))
+	require.NoError(t, err)
+
+	operationDone := make(chan error, 1)
+	go func() {
+		_, operationErr := supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("close-deadline-enable", "wireguard", "1.0.0", 1, nil))
+		operationDone <- operationErr
+	}()
+	select {
+	case <-health.entered:
+	case <-time.After(time.Second):
+		t.Fatal("operation did not enter the blocking health check")
+	}
+
+	closeCtx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, supervisor.Close(closeCtx), context.DeadlineExceeded)
+	_, err = supervisor.Handle(context.Background(), "plugin.inspect", testEnvelope("close-deadline-inspect", "wireguard", "1.0.0", 2, nil))
+	require.ErrorContains(t, err, "closing")
+
+	close(health.release)
+	require.NoError(t, <-operationDone)
+	require.NoError(t, supervisor.Close(context.Background()))
+}
+
 func TestJournalBindsOperationKindAndIdempotencyKey(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)

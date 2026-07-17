@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v4/plugin/machinetelemetry"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,7 +48,7 @@ func TestMachineTelemetryBinaryWithProductionRuntime(t *testing.T) {
 	artifactDigest := sha256.Sum256(artifact)
 	webUIDigest := sha256.Sum256(webUI)
 	manifest := Manifest{
-		ID: IDForMachineTelemetryTest, Name: "Machine Telemetry", Version: "1.0.0",
+		ID: IDForMachineTelemetryTest, Name: "Machine Telemetry", Version: machinetelemetry.Version,
 		APIVersion: pluginAPIVersion, Publisher: manifestPublisher,
 		Targets: []string{"control", "agent"}, Architectures: []string{runtime.GOOS + "/" + runtime.GOARCH},
 		ArtifactSHA256: hex.EncodeToString(artifactDigest[:]), Capabilities: []string{"telemetry.read"},
@@ -92,12 +93,12 @@ func TestMachineTelemetryBinaryWithProductionRuntime(t *testing.T) {
 	require.NoError(t, err)
 
 	config := []byte(`{"interval_seconds":5}`)
-	_, err = supervisor.Handle(context.Background(), "plugin.configure", testEnvelope("machine-telemetry-configure", IDForMachineTelemetryTest, "1.0.0", 1, config))
+	_, err = supervisor.Handle(context.Background(), "plugin.configure", testEnvelope("machine-telemetry-configure", IDForMachineTelemetryTest, machinetelemetry.Version, 1, config))
 	require.NoError(t, err)
-	require.FileExists(t, filepath.Join(rootDir, IDForMachineTelemetryTest, "1.0.0", "config.json"))
+	require.FileExists(t, filepath.Join(rootDir, IDForMachineTelemetryTest, machinetelemetry.Version, "config.json"))
 
 	startupCtx, cancelStartup := context.WithTimeout(context.Background(), 15*time.Second)
-	_, err = supervisor.Handle(startupCtx, "plugin.enable", testEnvelope("machine-telemetry-enable", IDForMachineTelemetryTest, "1.0.0", 2, nil))
+	_, err = supervisor.Handle(startupCtx, "plugin.enable", testEnvelope("machine-telemetry-enable", IDForMachineTelemetryTest, machinetelemetry.Version, 2, nil))
 	require.NoError(t, err)
 	cancelStartup()
 
@@ -105,10 +106,19 @@ func TestMachineTelemetryBinaryWithProductionRuntime(t *testing.T) {
 	healthCtx, cancelHealth := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelHealth()
 	require.NoError(t, (GRPCHealthChecker{Timeout: time.Second}).Check(healthCtx, socketPath), "startup context cancellation must not terminate the plugin")
+	metricsCtx, cancelMetrics := context.WithTimeout(context.Background(), 5*time.Second)
+	metrics, metricsErr := supervisor.TelemetryMetrics(metricsCtx)
+	cancelMetrics()
+	require.NoError(t, metricsErr)
+	require.NotEmpty(t, metrics)
+	require.Contains(t, metrics, "plugin.machine-telemetry.cpu_usage_percent")
+	require.Contains(t, metrics, "plugin.machine-telemetry.memory_usage_percent")
+	require.Contains(t, metrics, "plugin.machine-telemetry.disk_usage_percent")
+	require.Contains(t, metrics, "plugin.machine-telemetry.uptime_seconds")
 
 	stopCtx, cancelStop := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancelStop()
-	_, err = supervisor.Handle(stopCtx, "plugin.disable", testEnvelope("machine-telemetry-disable", IDForMachineTelemetryTest, "1.0.0", 3, nil))
+	_, err = supervisor.Handle(stopCtx, "plugin.disable", testEnvelope("machine-telemetry-disable", IDForMachineTelemetryTest, machinetelemetry.Version, 3, nil))
 	require.NoError(t, err)
 	_, err = os.Lstat(socketPath)
 	require.ErrorIs(t, err, os.ErrNotExist)

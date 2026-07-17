@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	mathrand "math/rand"
 	"net"
 	"strconv"
@@ -614,6 +615,157 @@ func TestUnknownOperationCancellationCompletesAndSuppressesLaterReplay(t *testin
 	require.Equal(t, operationNotRunningText, replayed.Message)
 }
 
+func TestExpiredOperationIsFailedWithoutInvokingHandler(t *testing.T) {
+	var handled atomic.Int32
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			handled.Add(1)
+			return json.RawMessage(`{"unexpected":true}`), nil
+		}),
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	operations := newSessionOperationState()
+	target := &agentv1pb.DesiredOperation{
+		OperationId: "deadline-before-accept", Kind: "agent.ping", Revision: 21,
+		DeadlineUnixMs: time.Now().Add(-time.Second).UnixMilli(),
+	}
+	queue := make(chan *agentv1pb.DesiredOperation, 1)
+	require.NoError(t, client.acceptOperation(stream, "session-1", queue, operations, target))
+	require.Empty(t, queue)
+	assert.Zero(t, handled.Load())
+	messages := stream.messages()
+	require.Len(t, messages, 2)
+	require.True(t, messages[0].GetOperationAck().Accepted)
+	terminal := messages[1].GetObservedState()
+	require.NotNil(t, terminal)
+	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED, terminal.Phase)
+	assert.Equal(t, operationDeadlineText, terminal.Message)
+
+	// A reconnect/replay must return the same terminal state without invoking
+	// the handler or changing the outcome.
+	require.NoError(t, client.acceptOperation(stream, "session-2", queue, operations, target))
+	assert.Zero(t, handled.Load())
+	require.Len(t, stream.messages(), 4)
+	replayed := stream.messages()[3].GetObservedState()
+	require.NotNil(t, replayed)
+	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED, replayed.Phase)
+}
+
+func TestQueuedOperationThatExpiresSkipsHandlerAndFails(t *testing.T) {
+	var handled atomic.Int32
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			handled.Add(1)
+			return nil, nil
+		}),
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	operations := newSessionOperationState()
+	queue := make(chan *agentv1pb.DesiredOperation, 1)
+	target := &agentv1pb.DesiredOperation{
+		OperationId: "deadline-in-queue", Kind: "agent.ping", Revision: 22,
+		DeadlineUnixMs: time.Now().Add(40 * time.Millisecond).UnixMilli(),
+	}
+	require.NoError(t, client.acceptOperation(stream, "session-1", queue, operations, target))
+	queued := <-queue
+	time.Sleep(100 * time.Millisecond)
+	client.executeOperation(context.Background(), stream, "session-1", operations, queued)
+
+	assert.Zero(t, handled.Load())
+	messages := stream.messages()
+	require.Len(t, messages, 2)
+	terminal := messages[1].GetObservedState()
+	require.NotNil(t, terminal)
+	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED, terminal.Phase)
+	assert.Equal(t, operationDeadlineText, terminal.Message)
+}
+
+func TestHandlerIgnoringDeadlineCannotReportSuccess(t *testing.T) {
+	started := make(chan struct{})
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			close(started)
+			time.Sleep(100 * time.Millisecond)
+			return json.RawMessage(`{"ignored":true}`), context.DeadlineExceeded
+		}),
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	operations := newSessionOperationState()
+	target := &agentv1pb.DesiredOperation{
+		OperationId: "deadline-ignored-by-handler", Kind: "agent.ping", Revision: 23,
+		DeadlineUnixMs: time.Now().Add(20 * time.Millisecond).UnixMilli(),
+	}
+	done := make(chan struct{})
+	go func() {
+		client.executeOperation(context.Background(), stream, "session-1", operations, target)
+		close(done)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start")
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("deadline operation did not finish")
+	}
+	messages := stream.messages()
+	require.Len(t, messages, 2)
+	terminal := messages[1].GetObservedState()
+	require.NotNil(t, terminal)
+	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_FAILED, terminal.Phase)
+	assert.Equal(t, operationDeadlineText, terminal.Message)
+}
+
+func TestHandlerIgnoringCancellationCannotReportSuccess(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			close(started)
+			<-release
+			return json.RawMessage(`{"ignored":true}`), nil
+		}),
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	operations := newSessionOperationState()
+	target := &agentv1pb.DesiredOperation{OperationId: "cancel-ignored-by-handler", Kind: "agent.ping", Revision: 24}
+	done := make(chan struct{})
+	go func() {
+		client.executeOperation(context.Background(), stream, "session-1", operations, target)
+		close(done)
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("handler did not start")
+	}
+	require.NoError(t, client.cancelOperation(stream, "session-1", operations, &agentv1pb.DesiredOperation{
+		OperationId: target.OperationId, Kind: operationCancelKind, Revision: target.Revision,
+	}))
+	close(release)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("cancelled operation did not finish")
+	}
+	messages := stream.messages()
+	require.Len(t, messages, 3)
+	terminal := messages[2].GetObservedState()
+	require.NotNil(t, terminal)
+	assert.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, terminal.Phase)
+	assert.Equal(t, operationCancelledText, terminal.Message)
+}
+
 func TestSessionOperationStateCloseCancelsAndClearsSessionState(t *testing.T) {
 	operations := newSessionOperationState()
 	running := &agentv1pb.DesiredOperation{OperationId: "session-running", Revision: 1}
@@ -640,6 +792,7 @@ func TestSessionOperationStateCloseCancelsAndClearsSessionState(t *testing.T) {
 	require.Empty(t, operations.running)
 	require.Empty(t, operations.queued)
 	require.Empty(t, operations.cancelled)
+	require.Empty(t, operations.expired)
 }
 
 func TestClientRetriesFailedDial(t *testing.T) {
@@ -690,4 +843,77 @@ func TestReconnectDelayUsesExponentialBackoffAndJitter(t *testing.T) {
 	assert.GreaterOrEqual(t, delay9, 2500*time.Millisecond)
 	assert.LessOrEqual(t, delay9, 5*time.Second)
 	assert.NotEqual(t, delay0, client.reconnectDelay(0), "jitter should vary retries at the same backoff step")
+}
+
+func TestSendHeartbeatMergesMetricsProviderAndFiltersInvalidValues(t *testing.T) {
+	providerCalled := make(chan struct{}, 1)
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		MetricsProvider: func(ctx context.Context) (map[string]float64, error) {
+			select {
+			case providerCalled <- struct{}{}:
+			default:
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return map[string]float64{
+				"cpu_usage_percent": 12.5,
+				"invalid_nan":       math.NaN(),
+				"invalid_inf":       math.Inf(1),
+				" ":                 99,
+			}, nil
+		},
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	require.NoError(t, client.sendHeartbeat(stream, "metrics-session", time.Now()))
+	select {
+	case <-providerCalled:
+	default:
+		t.Fatal("metrics provider was not called")
+	}
+	messages := stream.messages()
+	require.Len(t, messages, 1)
+	heartbeat := messages[0].GetHeartbeat()
+	require.NotNil(t, heartbeat)
+	assert.Equal(t, 12.5, heartbeat.Metrics["cpu_usage_percent"])
+	assert.Contains(t, heartbeat.Metrics, "go_goroutines")
+	assert.NotContains(t, heartbeat.Metrics, "invalid_nan")
+	assert.NotContains(t, heartbeat.Metrics, "invalid_inf")
+	assert.NotContains(t, heartbeat.Metrics, " ")
+}
+
+func TestSendHeartbeatContinuesWhenMetricsProviderFails(t *testing.T) {
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		MetricsProvider: func(context.Context) (map[string]float64, error) {
+			return nil, errors.New("telemetry unavailable")
+		},
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	require.NoError(t, client.sendHeartbeat(stream, "metrics-error-session", time.Now()))
+	messages := stream.messages()
+	require.Len(t, messages, 1)
+	heartbeat := messages[0].GetHeartbeat()
+	require.NotNil(t, heartbeat)
+	assert.Contains(t, heartbeat.Metrics, "go_goroutines")
+}
+
+func TestSendHeartbeatKeepsPartialMetricsWhenProviderReportsError(t *testing.T) {
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		MetricsProvider: func(context.Context) (map[string]float64, error) {
+			return map[string]float64{"plugin.machine-telemetry.cpu_usage_percent": 7.25}, errors.New("one plugin is unhealthy")
+		},
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	require.NoError(t, client.sendHeartbeat(stream, "metrics-partial-session", time.Now()))
+	messages := stream.messages()
+	require.Len(t, messages, 1)
+	heartbeat := messages[0].GetHeartbeat()
+	require.NotNil(t, heartbeat)
+	assert.Equal(t, 7.25, heartbeat.Metrics["plugin.machine-telemetry.cpu_usage_percent"])
 }

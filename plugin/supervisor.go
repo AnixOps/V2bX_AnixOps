@@ -19,6 +19,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -410,8 +411,43 @@ type persistedState struct {
 	Journal map[string]JournalEntry `json:"journal"`
 }
 
+// pluginLock serializes lifecycle work for one plugin while still allowing a
+// deadline or cancellation to abort a waiter. A channel token is used instead
+// of sync.Mutex because sync.Mutex has no context-aware acquisition primitive.
+type pluginLock struct {
+	token chan struct{}
+}
+
+func newPluginLock() *pluginLock {
+	token := make(chan struct{}, 1)
+	token <- struct{}{}
+	return &pluginLock{token: token}
+}
+
+func (lock *pluginLock) acquire(ctx context.Context) (func(), error) {
+	if lock == nil || lock.token == nil {
+		return nil, errors.New("plugin lifecycle lock is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-lock.token:
+		var once sync.Once
+		return func() {
+			once.Do(func() { lock.token <- struct{}{} })
+		}, nil
+	}
+}
+
 type Supervisor struct {
-	lifecycle           sync.RWMutex
+	lifecycle           *lifecycleGate
+	shutdown            *pluginLock
 	mu                  sync.Mutex
 	rootDir             string
 	socketDir           string
@@ -422,7 +458,7 @@ type Supervisor struct {
 	state               persistedState
 	processes           map[string]Process
 	processesGeneration map[string]uint64
-	pluginMu            map[string]*sync.Mutex
+	pluginMu            map[string]*pluginLock
 	running             map[string]chan struct{}
 	persistState        func([]byte) error
 	closed              bool
@@ -462,11 +498,12 @@ func NewSupervisor(config Config) (*Supervisor, error) {
 		return nil, err
 	}
 	supervisor := &Supervisor{
+		lifecycle: newLifecycleGate(), shutdown: newPluginLock(),
 		rootDir: rootDir, socketDir: socketDir, publicKey: append(ed25519.PublicKey(nil), config.PublicKey...),
 		runner: config.Runner, health: config.Health, now: config.Now,
 		state:     persistedState{Plugins: map[string]PluginState{}, Journal: map[string]JournalEntry{}},
 		processes: map[string]Process{}, processesGeneration: map[string]uint64{},
-		pluginMu: map[string]*sync.Mutex{}, running: map[string]chan struct{}{},
+		pluginMu: map[string]*pluginLock{}, running: map[string]chan struct{}{},
 	}
 	supervisor.persistState = func(encoded []byte) error {
 		return writePrivateFile(filepath.Join(supervisor.rootDir, "state.json"), encoded, 0o600)
@@ -498,8 +535,17 @@ type preparedInstall struct {
 // Install verifies a signed artifact, writes it into an Agent-owned directory,
 // and retains existing versions for explicit rollback.
 func (s *Supervisor) Install(ctx context.Context, request InstallRequest) (*PluginState, error) {
-	s.lifecycle.RLock()
-	defer s.lifecycle.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
+	release, gateErr := s.lifecycle.enter(ctx)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer release()
 	if err := s.checkOpen(); err != nil {
 		return nil, err
 	}
@@ -513,7 +559,10 @@ func (s *Supervisor) Install(ctx context.Context, request InstallRequest) (*Plug
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	unlockPlugin := s.lockPlugin(prepared.manifest.ID)
+	unlockPlugin, err := s.lockPlugin(ctx, prepared.manifest.ID)
+	if err != nil {
+		return nil, err
+	}
 	defer unlockPlugin()
 	return s.installPrepared(prepared, 0)
 }
@@ -724,8 +773,17 @@ func (s *Supervisor) HandleInstall(ctx context.Context, envelope *agent.Operatio
 }
 
 func (s *Supervisor) handle(ctx context.Context, kind string, envelope *agent.OperationEnvelope, installLoader InstallRequestLoader) (json.RawMessage, error) {
-	s.lifecycle.RLock()
-	defer s.lifecycle.RUnlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
+	release, gateErr := s.lifecycle.enter(ctx)
+	if gateErr != nil {
+		return nil, gateErr
+	}
+	defer release()
 	if err := s.checkOpen(); err != nil {
 		return nil, err
 	}
@@ -805,21 +863,25 @@ func (s *Supervisor) handle(ctx context.Context, kind string, envelope *agent.Op
 		break
 	}
 
-	unlockPlugin := s.lockPlugin(envelope.PluginID)
 	var result json.RawMessage
 	var err error
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		err = ctxErr
-	} else if operationMutatesState(kind) {
-		if recoveryErr := s.recoverPluginCleanup(envelope.PluginID); recoveryErr != nil {
-			err = fmt.Errorf("recover pending plugin cleanup before %s: %w", kind, recoveryErr)
+	unlockPlugin, lockErr := s.lockPlugin(ctx, envelope.PluginID)
+	if lockErr != nil {
+		err = lockErr
+	} else {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			err = ctxErr
+		} else if operationMutatesState(kind) {
+			if recoveryErr := s.recoverPluginCleanupContext(ctx, envelope.PluginID); recoveryErr != nil {
+				err = fmt.Errorf("recover pending plugin cleanup before %s: %w", kind, recoveryErr)
+			} else {
+				result, err = s.executeOperation(ctx, kind, envelope, repairReplay, installLoader)
+			}
 		} else {
 			result, err = s.executeOperation(ctx, kind, envelope, repairReplay, installLoader)
 		}
-	} else {
-		result, err = s.executeOperation(ctx, kind, envelope, repairReplay, installLoader)
+		unlockPlugin()
 	}
-	unlockPlugin()
 	s.mu.Lock()
 	entry := s.state.Journal[envelope.OperationID]
 	entry.UpdatedAt = s.now()
@@ -1156,7 +1218,7 @@ func (s *Supervisor) disable(ctx context.Context, envelope *agent.OperationEnvel
 	}
 	var cleanupErr error
 	if cleanupRequired {
-		cleanupErr = s.cleanupInstalledVersion(manifest, state.ID, state.DesiredVersion)
+		cleanupErr = s.cleanupInstalledVersionContext(ctx, manifest, state.ID, state.DesiredVersion)
 	}
 	socketErr := removeSocket(s.socketPath(envelope.PluginID))
 	operationErr := errors.Join(verifyErr, stopErr, cleanupErr, socketErr)
@@ -1260,7 +1322,7 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 	}
 
 	if !original.Enabled {
-		if cleanupErr := s.cleanupInstalledVersion(currentManifest, original.ID, original.DesiredVersion); cleanupErr != nil {
+		if cleanupErr := s.cleanupInstalledVersionContext(ctx, currentManifest, original.ID, original.DesiredVersion); cleanupErr != nil {
 			transitionErr := restoreTargetConfig(fmt.Errorf("cleanup current plugin version before update: %w", cleanupErr))
 			s.recordTransitionFailure(original, envelope.Revision, transitionErr, original.DesiredVersion)
 			return nil, transitionErr
@@ -1291,7 +1353,7 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		s.mu.Unlock()
 		stopErr = oldProcess.Stop(ctx)
 	}
-	cleanupErr := s.cleanupInstalledVersion(currentManifest, original.ID, original.DesiredVersion)
+	cleanupErr := s.cleanupInstalledVersionContext(ctx, currentManifest, original.ID, original.DesiredVersion)
 	if transitionErr := errors.Join(stopErr, cleanupErr); transitionErr != nil {
 		transitionErr = restoreTargetConfig(transitionErr)
 		cleanupVersion := ""
@@ -1313,7 +1375,7 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		cleanupBlocked := s.state.Plugins[original.ID].CleanupPending
 		s.mu.Unlock()
 		if cleanupBlocked {
-			recoveryErr := s.recoverPluginCleanup(original.ID)
+			recoveryErr := s.recoverPluginCleanupContext(ctx, original.ID)
 			restoreErr := restoreOptionalFile(targetConfigPath, oldTargetConfig, oldTargetConfigExists)
 			operationErr := errors.Join(fmt.Errorf("start updated plugin version: %w", startErr), recoveryErr, restoreErr)
 			s.recordUpdateRollbackBlocked(original, envelope.Revision, operationErr)
@@ -1368,7 +1430,7 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		var recoveryErr error
 		if stopCleanupErr != nil && cleanupPending {
 			s.markCleanupPending(original.ID, envelope.TargetVersion, stopCleanupErr)
-			recoveryErr = s.recoverPluginCleanup(original.ID)
+			recoveryErr = s.recoverPluginCleanupContext(ctx, original.ID)
 		}
 		restoreConfigErr := restoreOptionalFile(targetConfigPath, oldTargetConfig, oldTargetConfigExists)
 		if stopCleanupErr != nil {
@@ -1487,65 +1549,97 @@ func (s *Supervisor) healthCheck(ctx context.Context, envelope *agent.OperationE
 }
 
 func (s *Supervisor) Close(ctx context.Context) error {
-	s.lifecycle.Lock()
-	defer s.lifecycle.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	unlockShutdown, err := s.shutdown.acquire(ctx)
+	if err != nil {
+		return err
+	}
+	defer unlockShutdown()
+	if err := s.lifecycle.beginClose(ctx); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return nil
 	}
-	s.closed = true
-	pluginIDs := make(map[string]struct{}, len(s.processes))
+	pluginSet := make(map[string]struct{}, len(s.processes))
 	for id := range s.processes {
-		pluginIDs[id] = struct{}{}
+		pluginSet[id] = struct{}{}
 	}
 	for id, state := range s.state.Plugins {
 		if state.CleanupPending {
-			pluginIDs[id] = struct{}{}
+			pluginSet[id] = struct{}{}
 		}
 	}
 	s.mu.Unlock()
+	pluginIDs := make([]string, 0, len(pluginSet))
+	for id := range pluginSet {
+		pluginIDs = append(pluginIDs, id)
+	}
+	sort.Strings(pluginIDs)
 
 	var result error
-	for id := range pluginIDs {
-		unlockPlugin := s.lockPlugin(id)
+	for _, id := range pluginIDs {
+		unlockPlugin, lockErr := s.lockPlugin(ctx, id)
+		if lockErr != nil {
+			result = errors.Join(result, fmt.Errorf("lock plugin %s during close: %w", id, lockErr))
+			continue
+		}
 		s.mu.Lock()
 		state, ok := s.state.Plugins[id]
 		process := s.processes[id]
-		if process != nil {
-			s.removeProcessLocked(id)
-		}
 		s.mu.Unlock()
 
 		if ok && process != nil {
 			manifest, verifyErr := s.verifyInstalledVersion(id, state.DesiredVersion)
 			stopErr := process.Stop(ctx)
 			var cleanupErr error
-			cleanupCapable := verifyErr == nil && manifestSupportsCapability(manifest, "plugin.cleanup")
+			cleanupCapable := stopErr == nil && verifyErr == nil && manifestSupportsCapability(manifest, "plugin.cleanup")
 			if cleanupCapable {
-				cleanupErr = s.cleanupInstalledVersion(manifest, id, state.DesiredVersion)
+				cleanupErr = s.cleanupInstalledVersionContext(ctx, manifest, id, state.DesiredVersion)
 			}
-			socketErr := removeSocket(s.socketPath(id))
+			var socketErr error
+			if stopErr == nil {
+				socketErr = removeSocket(s.socketPath(id))
+			}
 			operationErr := errors.Join(verifyErr, stopErr, cleanupErr, socketErr)
 			result = errors.Join(result, operationErr)
 			s.mu.Lock()
 			state = s.state.Plugins[id]
+			if stopErr == nil && s.processes[id] == process {
+				s.removeProcessLocked(id)
+			}
 			state.Health, state.LastError, state.UpdatedAt = "stopped", "", s.now()
 			state.CleanupPending, state.CleanupVersion = false, ""
 			if operationErr != nil {
 				state.Health, state.LastError = "unhealthy", operationErr.Error()
-				if verifyErr != nil || (cleanupCapable && (stopErr != nil || cleanupErr != nil)) {
+				if verifyErr != nil || stopErr != nil || (cleanupCapable && cleanupErr != nil) {
 					state.CleanupPending, state.CleanupVersion = true, state.DesiredVersion
 				}
 			}
 			s.state.Plugins[id] = state
 			s.mu.Unlock()
 		}
-		result = errors.Join(result, s.recoverPluginCleanup(id))
+		result = errors.Join(result, s.recoverPluginCleanupContext(ctx, id))
 		unlockPlugin()
 	}
 	s.mu.Lock()
 	result = errors.Join(result, s.persistLocked())
+	remaining := len(s.processes) > 0
+	if !remaining {
+		for _, state := range s.state.Plugins {
+			if state.CleanupPending {
+				remaining = true
+				break
+			}
+		}
+	}
+	if result == nil && !remaining {
+		s.closed = true
+	}
 	s.mu.Unlock()
 	return result
 }
@@ -1587,7 +1681,10 @@ func (s *Supervisor) removeProcessLocked(id string) {
 
 func (s *Supervisor) observeProcessExit(id string, generation uint64, exited <-chan error) {
 	exitErr, _ := <-exited
-	unlockPlugin := s.lockPlugin(id)
+	unlockPlugin, lockErr := s.lockPlugin(context.Background(), id)
+	if lockErr != nil {
+		return
+	}
 	defer unlockPlugin()
 	s.mu.Lock()
 	if s.closed || s.processesGeneration[id] != generation {
@@ -1704,6 +1801,13 @@ func (s *Supervisor) recoverPendingCleanup() {
 }
 
 func (s *Supervisor) recoverPluginCleanup(id string) error {
+	return s.recoverPluginCleanupContext(context.Background(), id)
+}
+
+func (s *Supervisor) recoverPluginCleanupContext(ctx context.Context, id string) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	s.mu.Lock()
 	persisted, ok := s.state.Plugins[id]
 	s.mu.Unlock()
@@ -1717,7 +1821,7 @@ func (s *Supervisor) recoverPluginCleanup(id string) error {
 	manifest, verifyErr := s.verifyInstalledVersion(id, cleanupVersion)
 	var cleanupErr error
 	if verifyErr == nil && manifestSupportsCapability(manifest, "plugin.cleanup") {
-		cleanupErr = s.cleanupInstalledVersion(manifest, id, cleanupVersion)
+		cleanupErr = s.cleanupInstalledVersionContext(ctx, manifest, id, cleanupVersion)
 	}
 	socketErr := removeSocket(s.socketPath(id))
 	operationErr := errors.Join(verifyErr, cleanupErr, socketErr)
@@ -1821,16 +1925,15 @@ func (s *Supervisor) checkOpen() error {
 	return nil
 }
 
-func (s *Supervisor) lockPlugin(id string) func() {
+func (s *Supervisor) lockPlugin(ctx context.Context, id string) (func(), error) {
 	s.mu.Lock()
 	lock := s.pluginMu[id]
 	if lock == nil {
-		lock = &sync.Mutex{}
+		lock = newPluginLock()
 		s.pluginMu[id] = lock
 	}
 	s.mu.Unlock()
-	lock.Lock()
-	return lock.Unlock
+	return lock.acquire(ctx)
 }
 
 func (s *Supervisor) rejectStaleRevision(envelope *agent.OperationEnvelope, allowCurrent bool) error {
@@ -1885,7 +1988,7 @@ func (s *Supervisor) startVersion(ctx context.Context, id, version string) (Proc
 	}
 	if err := s.health.Check(ctx, socket); err != nil {
 		stopErr := stopProcess(process)
-		cleanupErr := s.cleanupInstalledVersion(manifest, id, version)
+		cleanupErr := s.cleanupInstalledVersionContext(ctx, manifest, id, version)
 		if manifestSupportsCapability(manifest, "plugin.cleanup") && (stopErr != nil || cleanupErr != nil) {
 			s.markCleanupPending(id, version, errors.Join(stopErr, cleanupErr))
 		}
@@ -1895,6 +1998,10 @@ func (s *Supervisor) startVersion(ctx context.Context, id, version string) (Proc
 }
 
 func (s *Supervisor) cleanupInstalledVersion(manifest *Manifest, id, version string) error {
+	return s.cleanupInstalledVersionContext(context.Background(), manifest, id, version)
+}
+
+func (s *Supervisor) cleanupInstalledVersionContext(parent context.Context, manifest *Manifest, id, version string) error {
 	if !manifestSupportsCapability(manifest, "plugin.cleanup") {
 		return nil
 	}
@@ -1905,7 +2012,10 @@ func (s *Supervisor) cleanupInstalledVersion(manifest *Manifest, id, version str
 	if err := ensurePrivateDir(filepath.Dir(s.runtimeStatePath(id))); err != nil {
 		return fmt.Errorf("prepare plugin runtime state directory: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, cleanupTimeout)
 	defer cancel()
 	return cleanupRunner.Cleanup(
 		ctx,
@@ -1921,7 +2031,7 @@ func (s *Supervisor) stopAndCleanupInstalledVersion(ctx context.Context, manifes
 	if process != nil {
 		stopErr = process.Stop(ctx)
 	}
-	cleanupErr := s.cleanupInstalledVersion(manifest, state.ID, state.DesiredVersion)
+	cleanupErr := s.cleanupInstalledVersionContext(ctx, manifest, state.ID, state.DesiredVersion)
 	cleanupPending := manifestSupportsCapability(manifest, "plugin.cleanup") && cleanupErr != nil
 	return cleanupPending, errors.Join(stopErr, cleanupErr)
 }

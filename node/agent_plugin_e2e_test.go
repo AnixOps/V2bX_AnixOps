@@ -28,6 +28,7 @@ import (
 	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
 	"github.com/AnixOps/anix-agent/v4/conf"
 	"github.com/AnixOps/anix-agent/v4/plugin"
+	"github.com/AnixOps/anix-agent/v4/plugin/machinetelemetry"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -147,7 +148,7 @@ func (s *e2eControlServer) authenticate(ctx context.Context) error {
 func (s *e2eControlServer) runFirstSession(stream agentv1pb.AgentControlService_ControlStreamServer, sessionID string) error {
 	configure := &agentv1pb.DesiredOperation{
 		OperationId: "machine-e2e-configure", Kind: "plugin.configure", Revision: 1,
-		PayloadJson: e2eOperationEnvelope("machine-e2e-configure", "configure-key", sessionID, 1, "machine-telemetry", "1.0.0", []byte(`{"interval_seconds":60}`)),
+		PayloadJson: e2eOperationEnvelope("machine-e2e-configure", "configure-key", sessionID, 1, "machine-telemetry", machinetelemetry.Version, []byte(`{"interval_seconds":60}`)),
 	}
 	if err := s.sendDesired(stream, configure); err != nil {
 		return err
@@ -158,7 +159,7 @@ func (s *e2eControlServer) runFirstSession(stream agentv1pb.AgentControlService_
 
 	enable := &agentv1pb.DesiredOperation{
 		OperationId: "machine-e2e-enable", Kind: "plugin.enable", Revision: 2,
-		PayloadJson: e2eOperationEnvelope("machine-e2e-enable", "enable-key", sessionID, 2, "machine-telemetry", "1.0.0", []byte(`{}`)),
+		PayloadJson: e2eOperationEnvelope("machine-e2e-enable", "enable-key", sessionID, 2, "machine-telemetry", machinetelemetry.Version, []byte(`{}`)),
 	}
 	if err := s.sendDesired(stream, enable); err != nil {
 		return err
@@ -169,7 +170,7 @@ func (s *e2eControlServer) runFirstSession(stream agentv1pb.AgentControlService_
 
 	health := &agentv1pb.DesiredOperation{
 		OperationId: "machine-e2e-health-cancel", Kind: "plugin.health", Revision: 3,
-		PayloadJson: e2eOperationEnvelope("machine-e2e-health-cancel", "health-key", sessionID, 3, "machine-telemetry", "1.0.0", []byte(`{}`)),
+		PayloadJson: e2eOperationEnvelope("machine-e2e-health-cancel", "health-key", sessionID, 3, "machine-telemetry", machinetelemetry.Version, []byte(`{}`)),
 	}
 	entered, _ := s.gate.BlockNext()
 	if err := s.sendDesired(stream, health); err != nil {
@@ -191,7 +192,7 @@ func (s *e2eControlServer) runFirstSession(stream agentv1pb.AgentControlService_
 func (s *e2eControlServer) runReplaySession(stream agentv1pb.AgentControlService_ControlStreamServer, sessionID string) error {
 	replay := &agentv1pb.DesiredOperation{
 		OperationId: "machine-e2e-health-cancel", Kind: "plugin.health", Revision: 3,
-		PayloadJson: e2eOperationEnvelope("machine-e2e-health-cancel", "health-key", sessionID, 3, "machine-telemetry", "1.0.0", []byte(`{}`)),
+		PayloadJson: e2eOperationEnvelope("machine-e2e-health-cancel", "health-key", sessionID, 3, "machine-telemetry", machinetelemetry.Version, []byte(`{}`)),
 	}
 	if err := s.sendDesired(stream, replay); err != nil {
 		return err
@@ -296,7 +297,7 @@ func TestAgentClientControllerSupervisorMachineTelemetryE2E(t *testing.T) {
 	artifact := makeE2EPackage(t, entrypoint, binary)
 	artifactDigest := sha256.Sum256(artifact)
 	manifest := plugin.Manifest{
-		ID: "machine-telemetry", Name: "Machine Telemetry", Version: "1.0.0", APIVersion: "v1", Publisher: "AnixOps",
+		ID: "machine-telemetry", Name: "Machine Telemetry", Version: machinetelemetry.Version, APIVersion: "v1", Publisher: "AnixOps",
 		Targets: []string{"agent"}, Architectures: []string{runtime.GOOS + "/" + runtime.GOARCH},
 		ArtifactSHA256: hex.EncodeToString(artifactDigest[:]), Capabilities: []string{"telemetry.read"},
 		ConfigSchema: json.RawMessage(`{"additionalProperties":false,"properties":{"interval_seconds":{"maximum":3600,"minimum":5,"type":"integer"}},"type":"object"}`),

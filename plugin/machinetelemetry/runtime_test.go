@@ -2,6 +2,7 @@ package machinetelemetry
 
 import (
 	"context"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -101,4 +102,52 @@ func TestRunServesHealthAndCleansSocket(t *testing.T) {
 	}
 	_, err = os.Lstat(socketPath)
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestRunServesTelemetrySnapshot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket plugin runtime")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
+	configPath := filepath.Join(dir, "config.json")
+	socketPath := filepath.Join(dir, "plugin.sock")
+	require.NoError(t, os.WriteFile(configPath, []byte(`{"interval_seconds":5}`), 0o600))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { result <- Run(ctx, Options{SocketPath: socketPath, ConfigPath: configPath}) }()
+
+	dialCtx, cancelDial := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelDial()
+	connection, err := grpc.DialContext(dialCtx, "unix://"+socketPath, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	require.NoError(t, err)
+	client := NewTelemetryClient(connection)
+	snapshot, err := client.Snapshot(dialCtx)
+	require.NoError(t, err)
+	require.NoError(t, snapshot.Validate())
+	require.Greater(t, snapshot.ObservedAtUnixMs, int64(0))
+	require.Contains(t, snapshot.Metrics, "cpu_usage_percent")
+	require.Contains(t, snapshot.Metrics, "memory_usage_percent")
+	require.Contains(t, snapshot.Metrics, "disk_usage_percent")
+	require.Contains(t, snapshot.Metrics, "uptime_seconds")
+	require.NoError(t, connection.Close())
+
+	cancel()
+	select {
+	case err := <-result:
+		require.NoError(t, err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("plugin did not stop after cancellation")
+	}
+}
+
+func TestSnapshotRejectsUntrustedValues(t *testing.T) {
+	base := Snapshot{Metrics: map[string]float64{"cpu_usage_percent": 1}, ObservedAtUnixMs: 1}
+	require.NoError(t, base.Validate())
+	base.Metrics["Bad Key"] = 1
+	require.ErrorContains(t, base.Validate(), "invalid")
+	base.Metrics = map[string]float64{"cpu_usage_percent": 1}
+	base.Metrics["memory_usage_percent"] = math.Inf(1)
+	require.ErrorContains(t, base.Validate(), "not finite")
 }

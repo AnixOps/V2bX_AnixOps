@@ -7,24 +7,36 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/AnixOps/anix-agent/v4/common/monitor"
+	"github.com/shirou/gopsutil/v3/host"
+	gopsnet "github.com/shirou/gopsutil/v3/net"
+	"github.com/shirou/gopsutil/v3/process"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/types/known/structpb"
 )
 
 const (
 	ID                     = "machine-telemetry"
-	Version                = "1.0.0"
+	Version                = "1.1.0"
 	DefaultIntervalSeconds = 60
 	MinimumIntervalSeconds = 5
 	MaximumIntervalSeconds = 3600
 	maxConfigBytes         = 64 << 10
+	TelemetryServiceName   = "anixops.plugin.v1.Telemetry"
+	TelemetryMethodName    = "Snapshot"
+	MaxMetrics             = 32
+	MaxMetricKeyLength     = 96
 )
 
 type Config struct {
@@ -127,9 +139,215 @@ type Options struct {
 	ConfigPath string
 }
 
-// Run serves the versioned reference plugin until ctx is cancelled. The
-// standard health service is the first stable local RPC contract; telemetry
-// transport is intentionally left to a later API revision.
+// Snapshot is the versioned, read-only payload exposed to the Agent
+// Supervisor. Values are deliberately scalar and bounded so a plugin cannot
+// smuggle arbitrary data through the heartbeat metrics map.
+type Snapshot struct {
+	Metrics          map[string]float64
+	ObservedAtUnixMs int64
+}
+
+func (s Snapshot) Validate() error {
+	if len(s.Metrics) == 0 {
+		return errors.New("telemetry snapshot has no metrics")
+	}
+	if len(s.Metrics) > MaxMetrics {
+		return fmt.Errorf("telemetry snapshot has more than %d metrics", MaxMetrics)
+	}
+	for key, value := range s.Metrics {
+		if !validMetricKey(key) {
+			return fmt.Errorf("telemetry metric key %q is invalid", key)
+		}
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Errorf("telemetry metric %q is not finite", key)
+		}
+	}
+	if s.ObservedAtUnixMs <= 0 {
+		return errors.New("telemetry snapshot observed_at_unix_ms is required")
+	}
+	return nil
+}
+
+func validMetricKey(key string) bool {
+	if key == "" || len(key) > MaxMetricKeyLength {
+		return false
+	}
+	for index, character := range key {
+		if (character >= 'a' && character <= 'z') ||
+			(character >= '0' && character <= '9') || character == '_' || character == '.' || character == '-' {
+			if index == 0 && character >= '0' && character <= '9' {
+				return false
+			}
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (s Snapshot) toStruct() (*structpb.Struct, error) {
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+	metrics := make(map[string]*structpb.Value, len(s.Metrics))
+	for key, value := range s.Metrics {
+		metrics[key] = structpb.NewNumberValue(value)
+	}
+	return &structpb.Struct{Fields: map[string]*structpb.Value{
+		"metrics":             structpb.NewStructValue(&structpb.Struct{Fields: metrics}),
+		"observed_at_unix_ms": structpb.NewNumberValue(float64(s.ObservedAtUnixMs)),
+	}}, nil
+}
+
+func snapshotFromStruct(payload *structpb.Struct) (Snapshot, error) {
+	if payload == nil {
+		return Snapshot{}, errors.New("telemetry snapshot response is empty")
+	}
+	metricsValue, ok := payload.Fields["metrics"]
+	if !ok || metricsValue.GetStructValue() == nil {
+		return Snapshot{}, errors.New("telemetry snapshot metrics are missing")
+	}
+	metrics := make(map[string]float64, len(metricsValue.GetStructValue().Fields))
+	for key, value := range metricsValue.GetStructValue().Fields {
+		number, ok := value.Kind.(*structpb.Value_NumberValue)
+		if !ok {
+			return Snapshot{}, fmt.Errorf("telemetry metric %q is not numeric", key)
+		}
+		metrics[key] = number.NumberValue
+	}
+	observedValue, ok := payload.Fields["observed_at_unix_ms"]
+	if !ok {
+		return Snapshot{}, errors.New("telemetry snapshot observed_at_unix_ms is missing")
+	}
+	observed := observedValue.GetNumberValue()
+	if observed <= 0 || math.IsNaN(observed) || math.IsInf(observed, 0) || math.Trunc(observed) != observed {
+		return Snapshot{}, errors.New("telemetry snapshot observed_at_unix_ms is invalid")
+	}
+	snapshot := Snapshot{Metrics: metrics, ObservedAtUnixMs: int64(observed)}
+	if err := snapshot.Validate(); err != nil {
+		return Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
+type telemetryServer interface {
+	Snapshot(context.Context, *emptypb.Empty) (*structpb.Struct, error)
+}
+
+// RegisterTelemetryServer registers the stable local RPC without requiring a
+// generated protobuf file. The wire messages are standard protobuf Structs,
+// allowing the Agent and plugin to evolve independently within API v1.
+func RegisterTelemetryServer(registrar grpc.ServiceRegistrar, server telemetryServer) {
+	registrar.RegisterService(&grpc.ServiceDesc{
+		ServiceName: TelemetryServiceName,
+		HandlerType: (*telemetryServer)(nil),
+		Methods: []grpc.MethodDesc{{
+			MethodName: TelemetryMethodName,
+			Handler: func(srv interface{}, ctx context.Context, decoder func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+				request := new(emptypb.Empty)
+				if err := decoder(request); err != nil {
+					return nil, err
+				}
+				if interceptor == nil {
+					return srv.(telemetryServer).Snapshot(ctx, request)
+				}
+				info := &grpc.UnaryServerInfo{Server: srv, FullMethod: "/" + TelemetryServiceName + "/" + TelemetryMethodName}
+				handler := func(ctx context.Context, request any) (any, error) {
+					return srv.(telemetryServer).Snapshot(ctx, request.(*emptypb.Empty))
+				}
+				return interceptor(ctx, request, info, handler)
+			},
+		}},
+	}, server)
+}
+
+type telemetryClient struct{ connection grpc.ClientConnInterface }
+
+// NewTelemetryClient creates an Agent-side client for the local v1 RPC.
+func NewTelemetryClient(connection grpc.ClientConnInterface) *telemetryClient {
+	return &telemetryClient{connection: connection}
+}
+
+func (c *telemetryClient) Snapshot(ctx context.Context) (Snapshot, error) {
+	if c == nil || c.connection == nil {
+		return Snapshot{}, errors.New("telemetry client connection is unavailable")
+	}
+	response := new(structpb.Struct)
+	if err := c.connection.Invoke(ctx, "/"+TelemetryServiceName+"/"+TelemetryMethodName, &emptypb.Empty{}, response); err != nil {
+		return Snapshot{}, err
+	}
+	return snapshotFromStruct(response)
+}
+
+type snapshotStore struct {
+	mu       sync.RWMutex
+	snapshot Snapshot
+}
+
+func (s *snapshotStore) get() Snapshot {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return Snapshot{Metrics: cloneMetrics(s.snapshot.Metrics), ObservedAtUnixMs: s.snapshot.ObservedAtUnixMs}
+}
+
+func (s *snapshotStore) refresh() {
+	info, err := monitor.GetSystemInfo()
+	if err != nil || info == nil {
+		return
+	}
+	metrics := map[string]float64{
+		"cpu_usage_percent":      info.CPUUsage,
+		"memory_usage_percent":   info.MemoryUsage,
+		"disk_usage_percent":     info.DiskUsage,
+		"process_uptime_seconds": float64(info.Uptime),
+	}
+	if uptime, err := host.Uptime(); err == nil {
+		metrics["uptime_seconds"] = float64(uptime)
+	} else {
+		metrics["uptime_seconds"] = float64(info.Uptime)
+	}
+	if counters, err := gopsnet.IOCounters(false); err == nil && len(counters) > 0 {
+		metrics["network_bytes_sent"] = float64(counters[0].BytesSent)
+		metrics["network_bytes_recv"] = float64(counters[0].BytesRecv)
+	}
+	if processes, err := process.Processes(); err == nil {
+		metrics["process_count"] = float64(len(processes))
+	}
+	for key, value := range metrics {
+		if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 {
+			delete(metrics, key)
+		}
+	}
+	if len(metrics) == 0 {
+		return
+	}
+	s.mu.Lock()
+	s.snapshot = Snapshot{Metrics: metrics, ObservedAtUnixMs: time.Now().UnixMilli()}
+	s.mu.Unlock()
+}
+
+func cloneMetrics(metrics map[string]float64) map[string]float64 {
+	cloned := make(map[string]float64, len(metrics))
+	for key, value := range metrics {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+type telemetryRPC struct{ store *snapshotStore }
+
+func (r telemetryRPC) Snapshot(ctx context.Context, _ *emptypb.Empty) (*structpb.Struct, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if r.store == nil {
+		return nil, errors.New("telemetry snapshot store is unavailable")
+	}
+	snapshot := r.store.get()
+	return snapshot.toStruct()
+}
+
+// Run serves the versioned reference plugin until ctx is cancelled.
 func Run(ctx context.Context, options Options) error {
 	if ctx == nil {
 		return errors.New("plugin context is required")
@@ -148,6 +366,9 @@ func Run(ctx context.Context, options Options) error {
 	}()
 
 	server := grpc.NewServer()
+	store := &snapshotStore{}
+	store.refresh()
+	RegisterTelemetryServer(server, telemetryRPC{store: store})
 	healthServer := health.NewServer()
 	healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 	healthServer.SetServingStatus(ID, healthpb.HealthCheckResponse_SERVING)
@@ -178,8 +399,7 @@ func Run(ctx context.Context, options Options) error {
 			}
 			return nil
 		case <-ticker.C:
-			// The v1 reference package has no telemetry transport yet. Refreshing
-			// health proves the signed interval is active without leaking data.
+			store.refresh()
 			healthServer.SetServingStatus("", healthpb.HealthCheckResponse_SERVING)
 			healthServer.SetServingStatus(ID, healthpb.HealthCheckResponse_SERVING)
 		}
