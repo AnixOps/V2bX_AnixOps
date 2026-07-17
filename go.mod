@@ -3,7 +3,7 @@ module github.com/AnixOps/anix-agent/v4
 go 1.25.0
 
 require (
-	github.com/AnixOps/anix-agent/sdk v1.0.0-rc.1
+	github.com/AnixOps/anix-agent/sdk v1.0.0
 	github.com/apernet/hysteria/core/v2 v2.6.4
 	github.com/apernet/hysteria/extras/v2 v2.6.4
 	github.com/beevik/ntp v1.4.4-0.20240716062501-06ef196b89ec
