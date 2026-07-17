@@ -424,6 +424,7 @@ type Supervisor struct {
 	processesGeneration map[string]uint64
 	pluginMu            map[string]*sync.Mutex
 	running             map[string]chan struct{}
+	persistState        func([]byte) error
 	closed              bool
 }
 
@@ -467,6 +468,9 @@ func NewSupervisor(config Config) (*Supervisor, error) {
 		processes: map[string]Process{}, processesGeneration: map[string]uint64{},
 		pluginMu: map[string]*sync.Mutex{}, running: map[string]chan struct{}{},
 	}
+	supervisor.persistState = func(encoded []byte) error {
+		return writePrivateFile(filepath.Join(supervisor.rootDir, "state.json"), encoded, 0o600)
+	}
 	if err := supervisor.load(); err != nil {
 		return nil, err
 	}
@@ -481,6 +485,16 @@ type InstallRequest struct {
 	Artifact     []byte
 }
 
+type preparedInstall struct {
+	manifest           *Manifest
+	canonicalManifest  []byte
+	canonicalSignature string
+	artifact           []byte
+	binary             []byte
+	packaged           bool
+	runtimes           []materializedRuntime
+}
+
 // Install verifies a signed artifact, writes it into an Agent-owned directory,
 // and retains existing versions for explicit rollback.
 func (s *Supervisor) Install(ctx context.Context, request InstallRequest) (*PluginState, error) {
@@ -492,6 +506,19 @@ func (s *Supervisor) Install(ctx context.Context, request InstallRequest) (*Plug
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	prepared, err := s.prepareInstall(request)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	unlockPlugin := s.lockPlugin(prepared.manifest.ID)
+	defer unlockPlugin()
+	return s.installPrepared(prepared, 0)
+}
+
+func (s *Supervisor) prepareInstall(request InstallRequest) (*preparedInstall, error) {
 	manifest, err := VerifyManifest(request.ManifestJSON, request.Signature, s.publicKey)
 	if err != nil {
 		return nil, err
@@ -526,72 +553,70 @@ func (s *Supervisor) Install(ctx context.Context, request InstallRequest) (*Plug
 	if err != nil {
 		return nil, err
 	}
-	unlockPlugin := s.lockPlugin(manifest.ID)
-	defer unlockPlugin()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	dir := s.versionDir(manifest.ID, manifest.Version)
-	if err := ensurePrivateDir(dir); err != nil {
+	return &preparedInstall{
+		manifest: manifest, canonicalManifest: canonicalManifest, canonicalSignature: canonicalSignature,
+		artifact: append([]byte(nil), request.Artifact...), binary: binary, packaged: packaged, runtimes: runtimes,
+	}, nil
+}
+
+// installPrepared publishes a complete immutable version directory with one
+// rename. A crash before the rename leaves only a removable staging directory;
+// a crash after it leaves a complete version that a replay can verify and reuse.
+// The caller must hold the per-plugin lifecycle lock.
+func (s *Supervisor) installPrepared(prepared *preparedInstall, revision uint64) (*PluginState, error) {
+	if prepared == nil || prepared.manifest == nil {
+		return nil, errors.New("prepared plugin install is required")
+	}
+	manifest := prepared.manifest
+	pluginDir := filepath.Join(s.rootDir, manifest.ID)
+	if err := ensurePrivateDir(pluginDir); err != nil {
 		return nil, err
 	}
-	currentManifestJSON, manifestReadErr := os.ReadFile(filepath.Join(dir, manifestFileName))
-	currentSignature, signatureReadErr := os.ReadFile(filepath.Join(dir, signatureFileName))
-	if manifestReadErr != nil && !errors.Is(manifestReadErr, os.ErrNotExist) {
-		return nil, fmt.Errorf("read installed plugin manifest: %w", manifestReadErr)
+	if err := removeStaleInstallStages(pluginDir, manifest.Version); err != nil {
+		return nil, err
 	}
-	if signatureReadErr != nil && !errors.Is(signatureReadErr, os.ErrNotExist) {
-		return nil, fmt.Errorf("read installed plugin signature: %w", signatureReadErr)
-	}
-	hasManifest := manifestReadErr == nil
-	hasSignature := signatureReadErr == nil
-	if hasManifest != hasSignature {
-		return nil, errors.New("installed plugin version metadata is incomplete; refusing immutable version overwrite")
-	}
-	if hasManifest {
-		currentManifest, verifyErr := VerifyManifest(string(currentManifestJSON), strings.TrimSpace(string(currentSignature)), s.publicKey)
-		if verifyErr != nil {
-			return nil, fmt.Errorf("installed plugin version metadata is invalid; refusing immutable version overwrite: %w", verifyErr)
-		}
-		currentCanonical, canonicalErr := CanonicalManifest(*currentManifest)
-		if canonicalErr != nil {
-			return nil, fmt.Errorf("canonicalize installed plugin manifest: %w", canonicalErr)
-		}
-		if currentManifest.ID != manifest.ID || currentManifest.Version != manifest.Version ||
-			!bytes.Equal(currentCanonical, canonicalManifest) || strings.TrimSpace(string(currentSignature)) != canonicalSignature {
-			return nil, errors.New("installed plugin versions are immutable")
-		}
-	}
-	if packaged {
-		if err := writePrivateFile(filepath.Join(dir, pluginPackageName), request.Artifact, 0o600); err != nil {
+	finalDir := s.versionDir(manifest.ID, manifest.Version)
+	if _, err := os.Lstat(finalDir); err == nil {
+		if err := s.verifyPreparedInstall(prepared); err != nil {
 			return nil, err
 		}
-	} else if err := os.Remove(filepath.Join(dir, pluginPackageName)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, err
-	}
-	if err := writePrivateFile(filepath.Join(dir, pluginBinaryName), binary, 0o750); err != nil {
-		return nil, err
-	}
-	for _, runtimeArtifact := range runtimes {
-		if err := writePrivateFile(
-			filepath.Join(dir, pluginRuntimeDirName, runtimeArtifact.Name),
-			runtimeArtifact.Contents,
-			0o750,
-		); err != nil {
-			return nil, fmt.Errorf("materialize runtime %q: %w", runtimeArtifact.Name, err)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("inspect installed plugin version: %w", err)
+	} else {
+		stagingDir, stageErr := os.MkdirTemp(pluginDir, "."+manifest.Version+".staging-")
+		if stageErr != nil {
+			return nil, fmt.Errorf("create plugin install staging directory: %w", stageErr)
+		}
+		defer os.RemoveAll(stagingDir)
+		if stageErr := os.Chmod(stagingDir, 0o700); stageErr != nil {
+			return nil, stageErr
+		}
+		if stageErr := writePreparedInstall(stagingDir, prepared); stageErr != nil {
+			return nil, stageErr
+		}
+		if stageErr := syncDirectory(stagingDir); stageErr != nil {
+			return nil, stageErr
+		}
+		if stageErr := os.Rename(stagingDir, finalDir); stageErr != nil {
+			return nil, fmt.Errorf("publish plugin version: %w", stageErr)
+		}
+		if stageErr := syncDirectory(pluginDir); stageErr != nil {
+			return nil, stageErr
 		}
 	}
-	if err := writePrivateFile(filepath.Join(dir, manifestFileName), canonicalManifest, 0o600); err != nil {
-		return nil, err
-	}
-	if err := writePrivateFile(filepath.Join(dir, signatureFileName), []byte(canonicalSignature), 0o600); err != nil {
-		return nil, err
-	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	state, existed := s.state.Plugins[manifest.ID]
 	previous := state
 	if state.ID == "" {
 		state.ID = manifest.ID
 		state.DesiredVersion = manifest.Version
 		state.Health = "installed"
+	}
+	if revision > 0 {
+		state.DesiredRevision = maxRevision(state.DesiredRevision, revision)
+		state.ObservedRevision = maxRevision(state.ObservedRevision, revision)
 	}
 	state.LastError = ""
 	state.UpdatedAt = s.now()
@@ -607,9 +632,98 @@ func (s *Supervisor) Install(ctx context.Context, request InstallRequest) (*Plug
 	return copyPluginState(state), nil
 }
 
+func writePreparedInstall(dir string, prepared *preparedInstall) error {
+	if prepared.packaged {
+		if err := writePrivateFile(filepath.Join(dir, pluginPackageName), prepared.artifact, 0o600); err != nil {
+			return err
+		}
+	}
+	if err := writePrivateFile(filepath.Join(dir, pluginBinaryName), prepared.binary, 0o750); err != nil {
+		return err
+	}
+	for _, runtimeArtifact := range prepared.runtimes {
+		if err := writePrivateFile(filepath.Join(dir, pluginRuntimeDirName, runtimeArtifact.Name), runtimeArtifact.Contents, 0o750); err != nil {
+			return fmt.Errorf("materialize runtime %q: %w", runtimeArtifact.Name, err)
+		}
+	}
+	if err := writePrivateFile(filepath.Join(dir, manifestFileName), prepared.canonicalManifest, 0o600); err != nil {
+		return err
+	}
+	return writePrivateFile(filepath.Join(dir, signatureFileName), []byte(prepared.canonicalSignature), 0o600)
+}
+
+func (s *Supervisor) verifyPreparedInstall(prepared *preparedInstall) error {
+	manifest := prepared.manifest
+	dir := s.versionDir(manifest.ID, manifest.Version)
+	currentManifestJSON, err := os.ReadFile(filepath.Join(dir, manifestFileName))
+	if err != nil {
+		return fmt.Errorf("installed plugin version metadata is incomplete; refusing immutable version overwrite: %w", err)
+	}
+	currentSignature, err := os.ReadFile(filepath.Join(dir, signatureFileName))
+	if err != nil {
+		return fmt.Errorf("installed plugin version metadata is incomplete; refusing immutable version overwrite: %w", err)
+	}
+	currentManifest, err := VerifyManifest(string(currentManifestJSON), strings.TrimSpace(string(currentSignature)), s.publicKey)
+	if err != nil {
+		return fmt.Errorf("installed plugin version metadata is invalid; refusing immutable version overwrite: %w", err)
+	}
+	currentCanonical, err := CanonicalManifest(*currentManifest)
+	if err != nil {
+		return fmt.Errorf("canonicalize installed plugin manifest: %w", err)
+	}
+	if currentManifest.ID != manifest.ID || currentManifest.Version != manifest.Version ||
+		!bytes.Equal(currentCanonical, prepared.canonicalManifest) || strings.TrimSpace(string(currentSignature)) != prepared.canonicalSignature {
+		return errors.New("installed plugin versions are immutable")
+	}
+	if _, err := s.verifyInstalledVersion(manifest.ID, manifest.Version); err != nil {
+		return fmt.Errorf("verify existing immutable plugin version: %w", err)
+	}
+	return nil
+}
+
+func removeStaleInstallStages(pluginDir, version string) error {
+	entries, err := os.ReadDir(pluginDir)
+	if err != nil {
+		return err
+	}
+	prefix := "." + version + ".staging-"
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(pluginDir, entry.Name())); err != nil {
+			return fmt.Errorf("remove stale plugin install staging directory: %w", err)
+		}
+	}
+	return nil
+}
+
+func syncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return errors.Join(directory.Sync(), directory.Close())
+}
+
+type InstallRequestLoader func(context.Context) (InstallRequest, error)
+
 // Handle executes an already validated plugin operation. It journals every
 // result before returning it so stream retries cannot restart a process.
 func (s *Supervisor) Handle(ctx context.Context, kind string, envelope *agent.OperationEnvelope) (json.RawMessage, error) {
+	return s.handle(ctx, kind, envelope, nil)
+}
+
+// HandleInstall keeps the remote fetch lazy: a completed replay returns its
+// journaled result without downloading the package again.
+func (s *Supervisor) HandleInstall(ctx context.Context, envelope *agent.OperationEnvelope, loader InstallRequestLoader) (json.RawMessage, error) {
+	if loader == nil {
+		return nil, errors.New("plugin install request loader is required")
+	}
+	return s.handle(ctx, "plugin.install", envelope, loader)
+}
+
+func (s *Supervisor) handle(ctx context.Context, kind string, envelope *agent.OperationEnvelope, installLoader InstallRequestLoader) (json.RawMessage, error) {
 	s.lifecycle.RLock()
 	defer s.lifecycle.RUnlock()
 	if err := s.checkOpen(); err != nil {
@@ -626,6 +740,7 @@ func (s *Supervisor) Handle(ctx context.Context, kind string, envelope *agent.Op
 	envelopeCopy.Config = append(json.RawMessage(nil), envelope.Config...)
 	envelope = &envelopeCopy
 
+	repairReplay := false
 	for {
 		s.mu.Lock()
 		if previous, ok := s.state.Journal[envelope.OperationID]; ok {
@@ -648,13 +763,13 @@ func (s *Supervisor) Handle(ctx context.Context, kind string, envelope *agent.Op
 			case "running":
 				done := s.running[envelope.OperationID]
 				if done == nil {
-					previous.State = "failed"
-					previous.Error = "plugin operation was interrupted before completion"
+					previous.State = "interrupted"
+					previous.Error = "plugin operation was interrupted before completion and is eligible for exact replay"
 					previous.UpdatedAt = s.now()
 					s.state.Journal[envelope.OperationID] = previous
 					_ = s.persistLocked()
 					s.mu.Unlock()
-					return nil, errors.New(previous.Error)
+					continue
 				}
 				s.mu.Unlock()
 				select {
@@ -663,6 +778,8 @@ func (s *Supervisor) Handle(ctx context.Context, kind string, envelope *agent.Op
 				case <-done:
 					continue
 				}
+			case "interrupted":
+				repairReplay = true
 			default:
 				s.mu.Unlock()
 				return nil, fmt.Errorf("plugin operation journal has invalid state %q", previous.State)
@@ -697,10 +814,10 @@ func (s *Supervisor) Handle(ctx context.Context, kind string, envelope *agent.Op
 		if recoveryErr := s.recoverPluginCleanup(envelope.PluginID); recoveryErr != nil {
 			err = fmt.Errorf("recover pending plugin cleanup before %s: %w", kind, recoveryErr)
 		} else {
-			result, err = s.handleOperation(ctx, kind, envelope)
+			result, err = s.executeOperation(ctx, kind, envelope, repairReplay, installLoader)
 		}
 	} else {
-		result, err = s.handleOperation(ctx, kind, envelope)
+		result, err = s.executeOperation(ctx, kind, envelope, repairReplay, installLoader)
 	}
 	unlockPlugin()
 	s.mu.Lock()
@@ -719,20 +836,41 @@ func (s *Supervisor) Handle(ctx context.Context, kind string, envelope *agent.Op
 		close(done)
 	}
 	s.mu.Unlock()
-	if err != nil {
-		return nil, err
-	}
-	if persistErr != nil {
-		return nil, persistErr
+	if err != nil || persistErr != nil {
+		return nil, errors.Join(err, persistErr)
 	}
 	return result, nil
 }
 
-func (s *Supervisor) handleOperation(ctx context.Context, kind string, envelope *agent.OperationEnvelope) (json.RawMessage, error) {
+func (s *Supervisor) executeOperation(ctx context.Context, kind string, envelope *agent.OperationEnvelope, repairReplay bool, installLoader InstallRequestLoader) (json.RawMessage, error) {
 	if operationMutatesState(kind) {
-		if err := s.rejectStaleRevision(envelope); err != nil {
+		if err := s.rejectStaleRevision(envelope, repairReplay); err != nil {
 			return nil, err
 		}
+	}
+	if kind == "plugin.install" {
+		if installLoader == nil {
+			return nil, errors.New("plugin install request loader is required")
+		}
+		request, err := installLoader(ctx)
+		if err != nil {
+			return nil, err
+		}
+		prepared, err := s.prepareInstall(request)
+		if err != nil {
+			return nil, err
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if prepared.manifest.ID != envelope.PluginID || prepared.manifest.Version != envelope.TargetVersion {
+			return nil, errors.New("downloaded plugin manifest does not match the operation target")
+		}
+		state, err := s.installPrepared(prepared, envelope.Revision)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(state)
 	}
 	switch kind {
 	case "plugin.inspect":
@@ -1059,6 +1197,9 @@ func (s *Supervisor) disable(ctx context.Context, envelope *agent.OperationEnvel
 }
 
 func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelope) (json.RawMessage, error) {
+	if containsInlineSecret(envelope.Config) {
+		return nil, errors.New("plugin config must reference secrets instead of containing secret material")
+	}
 	s.mu.Lock()
 	state, ok := s.state.Plugins[envelope.PluginID]
 	if !ok {
@@ -1066,8 +1207,34 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		return nil, errors.New("plugin is not installed")
 	}
 	if state.DesiredVersion == envelope.TargetVersion {
+		configMatches := false
+		if state.ConfigHash == envelope.ConfigHash {
+			configPath := filepath.Join(s.versionDir(state.ID, state.DesiredVersion), "config.json")
+			storedConfig, exists, readErr := readOptionalFile(configPath)
+			if readErr != nil {
+				s.mu.Unlock()
+				return nil, readErr
+			}
+			configMatches = exists && bytes.Equal(storedConfig, envelope.Config)
+		}
+		if configMatches {
+			if !state.Enabled {
+				state.DesiredRevision = maxRevision(state.DesiredRevision, envelope.Revision)
+				state.ObservedRevision = maxRevision(state.ObservedRevision, envelope.Revision)
+				state.UpdatedAt, state.LastError = s.now(), ""
+				s.state.Plugins[state.ID] = state
+				err := s.persistLocked()
+				s.mu.Unlock()
+				if err != nil {
+					return nil, err
+				}
+				return json.Marshal(state)
+			}
+			s.mu.Unlock()
+			return s.enable(ctx, envelope)
+		}
 		s.mu.Unlock()
-		return s.enable(ctx, envelope)
+		return s.configure(ctx, envelope)
 	}
 	original := state
 	oldProcess := s.processes[state.ID]
@@ -1080,16 +1247,28 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 	if err != nil {
 		return nil, fmt.Errorf("current plugin version is not installed or trusted: %w", err)
 	}
+	targetConfigPath := filepath.Join(s.versionDir(original.ID, envelope.TargetVersion), "config.json")
+	oldTargetConfig, oldTargetConfigExists, err := readOptionalFile(targetConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	if err := writePrivateFile(targetConfigPath, envelope.Config, 0o600); err != nil {
+		return nil, fmt.Errorf("write target plugin config: %w", err)
+	}
+	restoreTargetConfig := func(operationErr error) error {
+		return errors.Join(operationErr, restoreOptionalFile(targetConfigPath, oldTargetConfig, oldTargetConfigExists))
+	}
 
 	if !original.Enabled {
 		if cleanupErr := s.cleanupInstalledVersion(currentManifest, original.ID, original.DesiredVersion); cleanupErr != nil {
-			transitionErr := fmt.Errorf("cleanup current plugin version before update: %w", cleanupErr)
+			transitionErr := restoreTargetConfig(fmt.Errorf("cleanup current plugin version before update: %w", cleanupErr))
 			s.recordTransitionFailure(original, envelope.Revision, transitionErr, original.DesiredVersion)
 			return nil, transitionErr
 		}
 		state = original
 		state.PreviousVersion, state.DesiredVersion = original.DesiredVersion, envelope.TargetVersion
 		state.Health, state.LastError, state.CleanupPending, state.CleanupVersion = "installed", "", false, ""
+		state.ConfigHash = envelope.ConfigHash
 		state.DesiredRevision, state.ObservedRevision = maxRevision(state.DesiredRevision, envelope.Revision), maxRevision(state.ObservedRevision, envelope.Revision)
 		state.UpdatedAt = s.now()
 		s.mu.Lock()
@@ -1100,7 +1279,7 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		}
 		s.mu.Unlock()
 		if err != nil {
-			return nil, err
+			return nil, restoreTargetConfig(err)
 		}
 		return json.Marshal(state)
 	}
@@ -1114,6 +1293,7 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 	}
 	cleanupErr := s.cleanupInstalledVersion(currentManifest, original.ID, original.DesiredVersion)
 	if transitionErr := errors.Join(stopErr, cleanupErr); transitionErr != nil {
+		transitionErr = restoreTargetConfig(transitionErr)
 		cleanupVersion := ""
 		if cleanupErr != nil {
 			cleanupVersion = original.DesiredVersion
@@ -1122,8 +1302,9 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		return nil, fmt.Errorf("prepare current plugin version for update: %w", transitionErr)
 	}
 	if err := removeSocket(s.socketPath(original.ID)); err != nil {
-		s.recordConfigureStopFailure(original, err)
-		return nil, err
+		operationErr := restoreTargetConfig(err)
+		s.recordConfigureStopFailure(original, operationErr)
+		return nil, operationErr
 	}
 
 	newProcess, startErr := s.startVersion(ctx, original.ID, envelope.TargetVersion)
@@ -1133,17 +1314,19 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		s.mu.Unlock()
 		if cleanupBlocked {
 			recoveryErr := s.recoverPluginCleanup(original.ID)
-			operationErr := errors.Join(fmt.Errorf("start updated plugin version: %w", startErr), recoveryErr)
+			restoreErr := restoreOptionalFile(targetConfigPath, oldTargetConfig, oldTargetConfigExists)
+			operationErr := errors.Join(fmt.Errorf("start updated plugin version: %w", startErr), recoveryErr, restoreErr)
 			s.recordUpdateRollbackBlocked(original, envelope.Revision, operationErr)
 			return nil, operationErr
 		}
+		restoreErr := restoreOptionalFile(targetConfigPath, oldTargetConfig, oldTargetConfigExists)
 		rollbackProcess, rollbackErr := s.startVersion(context.Background(), original.ID, original.DesiredVersion)
 		s.mu.Lock()
 		state = original
 		mergePendingCleanup(&state, s.state.Plugins[original.ID])
 		state.DesiredRevision = maxRevision(state.DesiredRevision, envelope.Revision)
 		state.UpdatedAt = s.now()
-		state.LastError = fmt.Sprintf("update to %s failed: %v", envelope.TargetVersion, startErr)
+		state.LastError = fmt.Sprintf("update to %s failed: %v", envelope.TargetVersion, errors.Join(startErr, restoreErr))
 		if rollbackErr == nil {
 			state.Enabled, state.Health, state.ObservedVersion, state.CleanupPending, state.CleanupVersion = true, "healthy", original.DesiredVersion, false, ""
 			state.ObservedRevision = maxRevision(state.ObservedRevision, envelope.Revision)
@@ -1156,14 +1339,15 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		persistErr := s.persistLocked()
 		s.mu.Unlock()
 		if persistErr != nil {
-			return nil, errors.Join(startErr, rollbackErr, persistErr)
+			return nil, errors.Join(startErr, restoreErr, rollbackErr, persistErr)
 		}
-		return nil, errors.Join(fmt.Errorf("start updated plugin version: %w", startErr), rollbackErr)
+		return nil, errors.Join(fmt.Errorf("start updated plugin version: %w", startErr), restoreErr, rollbackErr)
 	}
 
 	state = original
 	state.PreviousVersion, state.DesiredVersion = original.DesiredVersion, envelope.TargetVersion
 	state.Enabled, state.Health, state.ObservedVersion, state.CleanupPending, state.CleanupVersion = true, "healthy", envelope.TargetVersion, false, ""
+	state.ConfigHash = envelope.ConfigHash
 	state.DesiredRevision, state.ObservedRevision = maxRevision(state.DesiredRevision, envelope.Revision), maxRevision(state.ObservedRevision, envelope.Revision)
 	state.UpdatedAt, state.LastError = s.now(), ""
 	s.mu.Lock()
@@ -1181,15 +1365,14 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 			ID: original.ID, DesiredVersion: envelope.TargetVersion,
 		}, newProcess)
 		cancel()
+		var recoveryErr error
+		if stopCleanupErr != nil && cleanupPending {
+			s.markCleanupPending(original.ID, envelope.TargetVersion, stopCleanupErr)
+			recoveryErr = s.recoverPluginCleanup(original.ID)
+		}
+		restoreConfigErr := restoreOptionalFile(targetConfigPath, oldTargetConfig, oldTargetConfigExists)
 		if stopCleanupErr != nil {
-			if cleanupPending {
-				s.markCleanupPending(original.ID, envelope.TargetVersion, stopCleanupErr)
-			}
-			var recoveryErr error
-			if cleanupPending {
-				recoveryErr = s.recoverPluginCleanup(original.ID)
-			}
-			operationErr := errors.Join(persistErr, stopCleanupErr, recoveryErr)
+			operationErr := errors.Join(persistErr, stopCleanupErr, restoreConfigErr, recoveryErr)
 			s.recordUpdateRollbackBlocked(original, envelope.Revision, operationErr)
 			return nil, operationErr
 		}
@@ -1211,7 +1394,7 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		s.state.Plugins[original.ID] = current
 		statePersistErr := s.persistLocked()
 		s.mu.Unlock()
-		return nil, errors.Join(persistErr, stopCleanupErr, rollbackErr, statePersistErr)
+		return nil, errors.Join(persistErr, stopCleanupErr, restoreConfigErr, rollbackErr, statePersistErr)
 	}
 	return json.Marshal(state)
 }
@@ -1493,8 +1676,8 @@ func (s *Supervisor) load() error {
 			return fmt.Errorf("read plugin supervisor state: invalid journal result for %q", operationID)
 		}
 		if entry.State == "running" {
-			entry.State = "failed"
-			entry.Error = "plugin operation was interrupted by agent restart"
+			entry.State = "interrupted"
+			entry.Error = "plugin operation was interrupted by agent restart and is eligible for exact replay"
 			entry.UpdatedAt = s.now()
 			s.state.Journal[operationID] = entry
 			changed = true
@@ -1568,7 +1751,10 @@ func (s *Supervisor) persistLocked() error {
 	if err != nil {
 		return err
 	}
-	return writePrivateFile(filepath.Join(s.rootDir, "state.json"), encoded, 0o600)
+	if s.persistState == nil {
+		return errors.New("plugin supervisor state persister is not configured")
+	}
+	return s.persistState(encoded)
 }
 
 func writePrivateFile(path string, contents []byte, mode os.FileMode) error {
@@ -1647,14 +1833,14 @@ func (s *Supervisor) lockPlugin(id string) func() {
 	return lock.Unlock
 }
 
-func (s *Supervisor) rejectStaleRevision(envelope *agent.OperationEnvelope) error {
+func (s *Supervisor) rejectStaleRevision(envelope *agent.OperationEnvelope, allowCurrent bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	state, ok := s.state.Plugins[envelope.PluginID]
 	if !ok {
 		return nil
 	}
-	if envelope.Revision <= state.DesiredRevision {
+	if envelope.Revision < state.DesiredRevision || (!allowCurrent && envelope.Revision == state.DesiredRevision) {
 		return fmt.Errorf("plugin operation revision %d is not newer than desired revision %d", envelope.Revision, state.DesiredRevision)
 	}
 	return nil
@@ -1837,10 +2023,25 @@ func (s *Supervisor) recordPluginError(id, health string, operationErr error) {
 func (s *Supervisor) restoreEnabled() {
 	s.mu.Lock()
 	plugins := make([]PluginState, 0, len(s.state.Plugins))
-	for _, state := range s.state.Plugins {
+	deferred := false
+	for id, state := range s.state.Plugins {
 		if state.Enabled && !state.CleanupPending {
+			if entry, blocked := s.interruptedRuntimeTransitionLocked(state); blocked {
+				state.Health = "interrupted"
+				state.LastError = fmt.Sprintf(
+					"automatic restore deferred pending exact replay of %s operation %s at revision %d",
+					entry.Kind, entry.OperationID, entry.Revision,
+				)
+				state.UpdatedAt = s.now()
+				s.state.Plugins[id] = state
+				deferred = true
+				continue
+			}
 			plugins = append(plugins, state)
 		}
+	}
+	if deferred {
+		_ = s.persistLocked()
 	}
 	s.mu.Unlock()
 	for _, persisted := range plugins {
@@ -1864,6 +2065,32 @@ func (s *Supervisor) restoreEnabled() {
 	}
 }
 
+func (s *Supervisor) interruptedRuntimeTransitionLocked(state PluginState) (JournalEntry, bool) {
+	var blocker JournalEntry
+	found := false
+	for _, entry := range s.state.Journal {
+		if entry.PluginID != state.ID || entry.State != "interrupted" ||
+			!operationBlocksAutomaticRestore(entry.Kind) || entry.Revision < state.DesiredRevision {
+			continue
+		}
+		if !found || entry.Revision > blocker.Revision ||
+			(entry.Revision == blocker.Revision && entry.OperationID < blocker.OperationID) {
+			blocker = entry
+			found = true
+		}
+	}
+	return blocker, found
+}
+
+func operationBlocksAutomaticRestore(kind string) bool {
+	switch kind {
+	case "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback":
+		return true
+	default:
+		return false
+	}
+}
+
 func newJournalEntry(kind string, envelope *agent.OperationEnvelope, now time.Time) JournalEntry {
 	return JournalEntry{
 		OperationID: envelope.OperationID, IdempotencyKey: envelope.IdempotencyKey,
@@ -1882,7 +2109,7 @@ func journalMatches(entry JournalEntry, kind string, envelope *agent.OperationEn
 
 func validateOperation(kind string, envelope *agent.OperationEnvelope) error {
 	switch kind {
-	case "plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health":
+	case "plugin.install", "plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health":
 	default:
 		return fmt.Errorf("unsupported plugin operation %q", kind)
 	}
@@ -1917,7 +2144,7 @@ func safeIdentity(value string, maxLength int) bool {
 
 func operationMutatesState(kind string) bool {
 	switch kind {
-	case "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback":
+	case "plugin.install", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback":
 		return true
 	default:
 		return false

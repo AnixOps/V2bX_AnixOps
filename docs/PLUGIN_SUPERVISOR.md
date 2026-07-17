@@ -30,6 +30,25 @@ rejected. Entrypoints must be canonical relative paths.
 ## Runtime Contract
 
 Each installed version is retained under `PluginRoot/<plugin>/<version>`.
+`plugin.install` accepts the strict `anixops.io/plugin-install/v1alpha1`
+descriptor from the Agent Control stream. Its manifest and artifact URLs must
+be exact same-origin `/api/v3/agent/plugin-releases/<plugin>/<version>/...`
+paths with matching `sha256` and `size` query values. The Agent authenticates
+both raw-body GETs with its existing `X-API-Key`, refuses redirects and encoded
+or traversal paths, enforces a 1 MiB manifest limit and 32 MiB artifact limit,
+then verifies exact size, SHA-256, publisher, API version, trust-root key ID,
+and Ed25519 signature before installation.
+
+New versions are assembled under a private staging directory and published by
+one atomic rename. Exact retries verify and reuse a complete immutable version;
+stale pre-rename staging directories are removed. A restart converts an
+in-flight journal record to `interrupted`, allowing only the exact same
+operation/revision/config hash to repair it while still rejecting stale or
+rebound operations. An interrupted configure, enable, disable, update, or
+rollback blocks automatic process restore until that exact operation converges;
+Linux plugin children also receive a parent-death signal so an Agent crash
+cannot leave the old supervised process serving traffic.
+
 Disabling stops the process but preserves its binary, configuration references,
 state, and rollback version. The Supervisor writes `state.json` atomically and
 journals operation ID, revision, and configuration hash before changing a
@@ -90,8 +109,11 @@ It must expose the standard gRPC health service on the Unix socket. Business
 traffic must not pass through the Supervisor. A protocol plugin owns its data
 plane; nftables plugins program the kernel and then return control.
 
-The first implementation supports inspect, configure, enable, disable, update,
-rollback, health, and out-of-band `operation.cancel`. Enabled configuration
+The first implementation supports install, inspect, configure, enable, disable,
+update, rollback, health, and out-of-band `operation.cancel`. Update writes the
+target version's supplied configuration before starting it and records the
+matching `config_hash`; start, health, or state-persistence failure restores the
+old target file and previous running version. Enabled configuration
 changes restart and health-check the process; failed recovery disables it and
 records an unhealthy state. Unexpected CommandRunner exits are observed and
 also fail closed.
@@ -111,9 +133,11 @@ crash-safe ownership journals. `gost-mesh` also consumes a signed pinned GOST
 runtime from `runtime/gost`; QUIC and WSS require mutual TLS, and its privileged
 namespace matrix proves TCP/UDP data flow, TLS rejection, policy routing, child
 cleanup, and unrelated-state preservation. TUIC is not a GOST Mesh v1
-capability. Artifact transport from Control, Secret-ID materialization,
-topology apply, GOST-to-NAT composition, and sustained canary evidence are not
-complete, so this phase must not be described as production forwarding cutover.
+capability. Signed artifact transport from Control now has an Agent-side
+contract and implementation; Control endpoint integration, Secret-ID
+materialization, topology apply, GOST-to-NAT composition, and sustained canary
+evidence remain release gates, so this phase must not be described as production
+forwarding cutover.
 
 The signed `gost-mesh` executable also supports
 `--anixops-validate --anixops-config <absolute-path>` for release-gate contract

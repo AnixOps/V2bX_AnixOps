@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Added authenticated, same-origin `plugin.install` delivery for official
+  signed manifests and artifacts, with exact size/SHA-256/signature/key-ID
+  checks, redirect rejection, 32 MiB bounds, immutable staging publication,
+  and replay without a second download.
+
+### Fixed
+
+- Fixed update configuration ownership and same-revision interrupted-operation
+  repair. Agent restart now defers automatic plugin restore while a mutating
+  operation needs exact replay, joins terminal persistence failures with the
+  operation error, and uses Linux parent-death signaling to avoid leaving the
+  supervised plugin process running after an Agent crash.
+
 ## 3.1.0-alpha.1 - 2026-07-17
 
 ### Added

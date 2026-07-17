@@ -16,6 +16,7 @@ import (
 	"github.com/AnixOps/anix-agent/v3/api/panel"
 	"github.com/AnixOps/anix-agent/v3/conf"
 	vCore "github.com/AnixOps/anix-agent/v3/core"
+	"github.com/AnixOps/anix-agent/v3/plugin"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -156,7 +157,7 @@ func agentCapabilities(core vCore.Core, pluginSupervisorEnabled bool) []*agentv1
 		})
 	}
 	if pluginSupervisorEnabled {
-		for _, operation := range []string{"plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health"} {
+		for _, operation := range []string{"plugin.install", "plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health"} {
 			capabilities = append(capabilities, &agentv1pb.Capability{Name: operation, Version: "v1"})
 		}
 	}
@@ -174,6 +175,23 @@ func (c *Controller) handleAgentOperation(ctx context.Context, operation *agentv
 	}
 
 	switch operation.Kind {
+	case "plugin.install":
+		if c.pluginSupervisor == nil {
+			return nil, fmt.Errorf("plugin supervisor is not enabled")
+		}
+		envelope, err := agentapi.DecodeOperationEnvelopeContext(ctx, operation)
+		if err != nil {
+			return nil, err
+		}
+		installer, err := plugin.NewRemoteInstaller(plugin.RemoteInstallerConfig{
+			Supervisor: c.pluginSupervisor,
+			BaseURL:    c.apiClient.GetAPIHost(),
+			APIKey:     c.apiClient.GetAPIKey(),
+		})
+		if err != nil {
+			return nil, err
+		}
+		return installer.Handle(ctx, envelope)
 	case "plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health":
 		if c.pluginSupervisor == nil {
 			return nil, fmt.Errorf("plugin supervisor is not enabled")

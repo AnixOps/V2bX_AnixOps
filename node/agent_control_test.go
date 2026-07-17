@@ -134,7 +134,7 @@ func TestAgentCapabilitiesAdvertisePluginOperationsOnlyWhenEnabled(t *testing.T)
 			}
 		}
 	}
-	for _, name := range []string{"plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health"} {
+	for _, name := range []string{"plugin.install", "plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health"} {
 		if !contains(current, name) {
 			t.Fatalf("plugin-enabled Agent did not advertise %s", name)
 		}

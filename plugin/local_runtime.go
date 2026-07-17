@@ -50,6 +50,7 @@ func (r CommandRunner) start(ctx context.Context, binaryPath, socketPath, config
 	// plugin process must outlive the operation that enabled it and is stopped
 	// explicitly by disable, update, rollback, or Supervisor.Close.
 	command := exec.Command(binaryPath, args...)
+	configurePluginCommand(command)
 	if err := command.Start(); err != nil {
 		return nil, fmt.Errorf("start plugin process: %w", err)
 	}
