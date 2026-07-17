@@ -370,19 +370,22 @@ jobs:
         with:
           version: "29.2"
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      - name: Install generators and Buf
+      - uses: bufbuild/buf-action@v1
+        with:
+          version: "1.71.0"
+          setup_only: true
+      - name: Install generators
         run: |
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.1
-          go install github.com/bufbuild/buf/cmd/buf@v1.71.0
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Verify SDK
         run: |
           set -euo pipefail
           cd sdk
+          bash api/grpc/gen.sh
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-          bash api/grpc/gen.sh
           git diff --exit-code -- api/grpc/agent/v1
           test -z "$(git ls-files --others --exclude-standard -- api/grpc/agent/v1)"
           go test ./... -count=1
@@ -395,8 +398,8 @@ jobs:
 cd anix-agent/sdk
 chmod +x scripts/check-breaking.sh
 bash -n scripts/check-breaking.sh
-go install github.com/bufbuild/buf/cmd/buf@v1.71.0
-PATH="$(go env GOPATH)/bin:${PATH}" bash scripts/check-breaking.sh
+buf --version
+bash scripts/check-breaking.sh
 cd ..
 git add sdk .github/workflows/sdk.yml
 git commit -m "ci(sdk): verify generated and compatible protocol changes"
