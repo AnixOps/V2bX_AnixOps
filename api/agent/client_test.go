@@ -309,6 +309,55 @@ func TestClientControlStreamOperationLifecycle(t *testing.T) {
 	}
 }
 
+func TestCompletedOperationReplayResendsTerminalWithoutExecutingOldRevision(t *testing.T) {
+	var handled atomic.Int32
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		Handler: OperationHandlerFunc(func(context.Context, *agentv1pb.DesiredOperation) (json.RawMessage, error) {
+			handled.Add(1)
+			return json.RawMessage(`{"applied":true}`), nil
+		}),
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	operations := newSessionOperationState()
+	target := &agentv1pb.DesiredOperation{OperationId: "recovered-operation", Kind: "plugin.health", Revision: 7}
+	client.executeOperation(context.Background(), stream, "session-before-control-restart", operations, target)
+	require.Equal(t, int32(1), handled.Load())
+	require.Equal(t, target.Revision, client.observedRevision.Load())
+
+	queue := make(chan *agentv1pb.DesiredOperation, 1)
+	require.NoError(t, client.acceptOperation(stream, "session-after-control-restart", queue, operations, target))
+	require.Empty(t, queue)
+	require.Equal(t, int32(1), handled.Load(), "exact recovery must return the cached terminal without running the handler again")
+
+	different := &agentv1pb.DesiredOperation{OperationId: "different-operation", Kind: target.Kind, Revision: target.Revision}
+	require.NoError(t, client.acceptOperation(stream, "session-after-control-restart", queue, operations, different))
+	require.Empty(t, queue)
+	require.Equal(t, int32(1), handled.Load(), "a different operation at an observed revision must not execute")
+
+	messages := stream.messages()
+	require.Len(t, messages, 6)
+	replayedAck := messages[2].GetOperationAck()
+	require.NotNil(t, replayedAck)
+	require.True(t, replayedAck.Accepted)
+	require.Equal(t, target.OperationId, replayedAck.OperationId)
+	replayedTerminal := messages[3].GetObservedState()
+	require.NotNil(t, replayedTerminal)
+	require.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUCCEEDED, replayedTerminal.Phase)
+	require.Equal(t, "session-after-control-restart", replayedTerminal.SessionId)
+	require.JSONEq(t, `{"applied":true}`, string(replayedTerminal.StateJson))
+
+	staleAck := messages[4].GetOperationAck()
+	require.NotNil(t, staleAck)
+	require.True(t, staleAck.Accepted)
+	staleTerminal := messages[5].GetObservedState()
+	require.NotNil(t, staleTerminal)
+	require.Equal(t, different.OperationId, staleTerminal.OperationId)
+	require.Equal(t, agentv1pb.ObservedPhase_OBSERVED_PHASE_SUPERSEDED, staleTerminal.Phase)
+	require.Equal(t, "operation revision is stale", staleTerminal.Message)
+}
+
 func TestClientControlStreamCancellationLifecycle(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
