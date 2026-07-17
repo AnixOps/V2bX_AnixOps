@@ -23,7 +23,7 @@ import (
 
 const (
 	ID              = "nftables-forward"
-	Version         = "0.1.0"
+	Version         = "1.0.0"
 	DefaultFamily   = "inet"
 	DefaultTable    = "anixops_forward"
 	DefaultChain    = "prerouting"

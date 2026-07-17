@@ -4,6 +4,13 @@
 
 No changes yet.
 
+## 4.0.0-alpha.2 - 2026-07-17
+
+### Fixed
+
+- Fixed the `nftables-forward` runtime and `--version` output to report the
+  official signed package manifest version `1.0.0`.
+
 ## 4.0.0-alpha.1 - 2026-07-17
 
 ### Added
