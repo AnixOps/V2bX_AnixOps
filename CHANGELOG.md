@@ -10,6 +10,18 @@
   `machine-telemetry` reference package.
 - Added `operation.cancel:v1` handling for running, queued, repeated, unknown,
   and session-teardown cases, plus unexpected plugin-process exit observation.
+- Added the real `nat-egress` official plugin runtime with nftables IPv4/IPv6
+  masquerade, fwmark policy routing, interface-bound marked health probes,
+  strict conflict/configuration validation, and a crash-safe ownership journal.
+- Added privileged `nat-egress` namespace acceptance proving marked forwarded
+  traffic follows the plugin policy table and is masqueraded, wrong-mark
+  traffic remains isolated, counters increment, normal exit removes the
+  ownership journal, and rollback removes or restores owned host state.
+- Added Supervisor `plugin.runtime-state` and `plugin.cleanup` capability
+  enforcement with stable state paths, signed cleanup after crashes and
+  lifecycle transitions, persisted `cleanup_pending`/cleanup-version recovery,
+  and per-plugin serialization. A failed update-target cleanup leaves the old
+  version disabled; automatic rollback starts it only after cleanup succeeds.
 
 - Added a tag-pinned release installation guide and legacy migration runbook for fresh installs, same-fork updates, upstream config mapping, WireGuard canaries, rollback, and operator evidence.
 - Hardened the Linux release installer with ZIP SHA-256 verification, exact-tag management script retrieval, previous-binary backups, and automatic binary restoration when restart fails; it continues to install from GitHub Release assets without cloning or local builds.
@@ -33,4 +45,8 @@
 
 ### Known Gaps
 
+- Control production release-signing wiring for `nat-egress` is present, but
+  production activation still requires a signed release, topology prerequisites,
+  staged canary evidence, and operator approval. The real `gost-mesh` official
+  plugin runtime and its WSS/TUIC/QUIC namespace evidence also remain pending.
 - `v2.5.0-rc.6` passed the release-gated QUIC and WSS namespace acceptance jobs. Real geographically separated dual-node evidence and real-client import evidence are still not complete. Runtime health reporting and GOST process supervision do not replace those production observations.

@@ -31,6 +31,7 @@ type watchableFakeProcess struct {
 	fakeProcess
 	exitOnce sync.Once
 	exited   chan error
+	stopErr  error
 }
 
 func newWatchableFakeProcess() *watchableFakeProcess {
@@ -43,7 +44,7 @@ func (p *watchableFakeProcess) Stop(ctx context.Context) error {
 		p.exited <- nil
 		close(p.exited)
 	})
-	return err
+	return errors.Join(err, p.stopErr)
 }
 
 func (p *watchableFakeProcess) Exited() <-chan error { return p.exited }
@@ -59,6 +60,91 @@ type watchableRunner struct {
 	mu      sync.Mutex
 	starts  int
 	process *watchableFakeProcess
+}
+
+type statefulCleanupRunner struct {
+	mu           sync.Mutex
+	legacyStarts int
+	statePaths   []string
+	cleanupPaths []string
+	cleanupBins  []string
+	cleanupErr   error
+	stopErr      error
+	process      *watchableFakeProcess
+	cleanupEnter chan struct{}
+	cleanupWait  <-chan struct{}
+	cleanupCalls int
+	cleanupLive  int
+	cleanupMax   int
+}
+
+func (r *statefulCleanupRunner) Start(context.Context, string, string, string) (Process, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.legacyStarts++
+	r.process = newWatchableFakeProcess()
+	return r.process, nil
+}
+
+func (r *statefulCleanupRunner) StartWithState(_ context.Context, _, _, _, statePath string) (Process, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.statePaths = append(r.statePaths, statePath)
+	r.process = newWatchableFakeProcess()
+	r.process.stopErr = r.stopErr
+	return r.process, nil
+}
+
+func (r *statefulCleanupRunner) Cleanup(_ context.Context, binaryPath, _, _, statePath string) error {
+	r.mu.Lock()
+	r.cleanupPaths = append(r.cleanupPaths, statePath)
+	r.cleanupBins = append(r.cleanupBins, binaryPath)
+	r.cleanupCalls++
+	r.cleanupLive++
+	if r.cleanupLive > r.cleanupMax {
+		r.cleanupMax = r.cleanupLive
+	}
+	enter := r.cleanupEnter
+	wait := r.cleanupWait
+	cleanupErr := r.cleanupErr
+	r.mu.Unlock()
+	if enter != nil {
+		select {
+		case enter <- struct{}{}:
+		default:
+		}
+	}
+	if wait != nil {
+		<-wait
+	}
+	r.mu.Lock()
+	r.cleanupLive--
+	r.mu.Unlock()
+	return cleanupErr
+}
+
+func (r *statefulCleanupRunner) Process() *watchableFakeProcess {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.process
+}
+
+func (r *statefulCleanupRunner) Snapshot() (int, []string, []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.legacyStarts, append([]string(nil), r.statePaths...), append([]string(nil), r.cleanupPaths...)
+}
+
+func (r *statefulCleanupRunner) CleanupBinaries() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.cleanupBins...)
+}
+
+func (r *statefulCleanupRunner) CleanupStats() (int, int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cleanupCalls, r.cleanupMax
 }
 
 func (r *watchableRunner) Start(context.Context, string, string, string) (Process, error) {
@@ -125,6 +211,29 @@ type fakeHealth struct {
 	calls int
 }
 
+type failingHealth struct {
+	err error
+}
+
+func (h failingHealth) Check(context.Context, string) error { return h.err }
+
+type failAfterHealth struct {
+	mu        sync.Mutex
+	calls     int
+	failAfter int
+	err       error
+}
+
+func (h *failAfterHealth) Check(context.Context, string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls++
+	if h.calls > h.failAfter {
+		return h.err
+	}
+	return nil
+}
+
 type configRecordingRunner struct {
 	mu        sync.Mutex
 	configs   [][]byte
@@ -187,15 +296,27 @@ func (h *fakeHealth) Calls() int {
 }
 
 func signedRequest(t *testing.T, privateKey ed25519.PrivateKey, artifact []byte, id, version string) InstallRequest {
+	return signedRequestWithCapabilities(t, privateKey, artifact, id, version, nil)
+}
+
+func signedRequestWithCapabilities(t *testing.T, privateKey ed25519.PrivateKey, artifact []byte, id, version string, capabilities []string) InstallRequest {
 	t.Helper()
 	digest := sha256.Sum256(artifact)
 	manifest := Manifest{
 		ID: id, Name: id, Version: version, APIVersion: "v1", Publisher: manifestPublisher,
-		Targets: []string{"agent"}, ArtifactSHA256: hex.EncodeToString(digest[:]),
+		Targets: []string{"agent"}, ArtifactSHA256: hex.EncodeToString(digest[:]), Capabilities: append([]string(nil), capabilities...),
 	}
 	canonical, err := CanonicalManifest(manifest)
 	require.NoError(t, err)
 	return InstallRequest{ManifestJSON: string(canonical), Signature: base64.StdEncoding.EncodeToString(ed25519.Sign(privateKey, canonical)), Artifact: artifact}
+}
+
+func shortSocketDir(t *testing.T) string {
+	t.Helper()
+	directory, err := os.MkdirTemp("", "anix-plugin-sock-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	return directory
 }
 
 func readAgentManifestGolden(t *testing.T) []byte {
@@ -423,6 +544,299 @@ func TestSupervisorMarksUnexpectedProcessExitUnhealthyAndDisablesRestore(t *test
 	require.NoError(t, restarted.Close(context.Background()))
 }
 
+func TestSupervisorRequiresStatefulRunnerForDeclaredCapability(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = supervisor.Close(context.Background()) })
+
+	_, err = supervisor.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("stateful"), "nat-egress", "1.0.0", []string{"plugin.runtime-state"},
+	))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-stateful", "nat-egress", "1.0.0", 1, nil))
+	require.ErrorContains(t, err, "does not support the declared plugin.runtime-state capability")
+}
+
+func TestSupervisorUsesStableStateAndCleansCrashedPluginOnDisable(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	runner := &statefulCleanupRunner{}
+	supervisor, err := NewSupervisor(Config{RootDir: root, SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: runner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = supervisor.Close(context.Background()) })
+
+	_, err = supervisor.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("cleanup"), "nat-egress", "1.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-cleanup", "nat-egress", "1.0.0", 1, nil))
+	require.NoError(t, err)
+	expectedStatePath := filepath.Join(root, "nat-egress", "runtime-state", "ownership.json")
+	legacyStarts, statePaths, cleanupPaths := runner.Snapshot()
+	require.Zero(t, legacyStarts)
+	require.Equal(t, []string{expectedStatePath}, statePaths)
+	require.Empty(t, cleanupPaths)
+
+	runner.Process().Crash(errors.New("injected stateful plugin crash"))
+	require.Eventually(t, func() bool {
+		_, _, cleanups := runner.Snapshot()
+		return len(cleanups) == 1
+	}, 2*time.Second, 10*time.Millisecond)
+	stateJSON, err := supervisor.inspect("nat-egress")
+	require.NoError(t, err)
+	require.Contains(t, string(stateJSON), `"health":"unhealthy"`)
+
+	_, err = supervisor.Handle(context.Background(), "plugin.disable", testEnvelope("disable-after-crash", "nat-egress", "1.0.0", 2, nil))
+	require.NoError(t, err)
+	_, _, cleanupPaths = runner.Snapshot()
+	require.Equal(t, []string{expectedStatePath, expectedStatePath}, cleanupPaths, "disable must cleanup even after the process disappeared")
+	stateJSON, err = supervisor.inspect("nat-egress")
+	require.NoError(t, err)
+	require.Contains(t, string(stateJSON), `"health":"disabled"`)
+}
+
+func TestSupervisorDoesNotReportDisabledWhenCleanupFails(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	runner := &statefulCleanupRunner{cleanupErr: errors.New("injected cleanup failure")}
+	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: runner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = supervisor.Close(context.Background()) })
+
+	_, err = supervisor.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("cleanup-failure"), "nat-egress", "1.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-cleanup-failure", "nat-egress", "1.0.0", 1, nil))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.disable", testEnvelope("disable-cleanup-failure", "nat-egress", "1.0.0", 2, nil))
+	require.ErrorContains(t, err, "injected cleanup failure")
+	stateJSON, inspectErr := supervisor.inspect("nat-egress")
+	require.NoError(t, inspectErr)
+	require.Contains(t, string(stateJSON), `"health":"unhealthy"`)
+	require.NotContains(t, string(stateJSON), `"health":"disabled"`)
+	require.Contains(t, string(stateJSON), `"cleanup_pending":true`)
+	require.Contains(t, string(stateJSON), `"desired_revision":2`)
+	require.Contains(t, string(stateJSON), `"observed_revision":1`)
+}
+
+func TestSupervisorRecoversPendingCleanupAfterAgentRestart(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	socketDir := shortSocketDir(t)
+	failingRunner := &statefulCleanupRunner{cleanupErr: errors.New("injected crash cleanup failure")}
+	first, err := NewSupervisor(Config{RootDir: root, SocketDir: socketDir, PublicKey: publicKey, Runner: failingRunner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	_, err = first.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("pending-cleanup"), "nat-egress", "1.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = first.Handle(context.Background(), "plugin.enable", testEnvelope("enable-pending-cleanup", "nat-egress", "1.0.0", 1, nil))
+	require.NoError(t, err)
+	failingRunner.Process().Crash(errors.New("injected plugin crash before Agent restart"))
+	require.Eventually(t, func() bool {
+		stateJSON, inspectErr := first.inspect("nat-egress")
+		return inspectErr == nil && strings.Contains(string(stateJSON), `"cleanup_pending":true`)
+	}, 2*time.Second, 10*time.Millisecond)
+	require.ErrorContains(t, first.Close(context.Background()), "injected crash cleanup failure")
+
+	recoveryRunner := &statefulCleanupRunner{}
+	restarted, err := NewSupervisor(Config{RootDir: root, SocketDir: socketDir, PublicKey: publicKey, Runner: recoveryRunner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = restarted.Close(context.Background()) })
+	_, _, cleanupPaths := recoveryRunner.Snapshot()
+	require.Equal(t, []string{filepath.Join(root, "nat-egress", "runtime-state", "ownership.json")}, cleanupPaths)
+	stateJSON, err := restarted.inspect("nat-egress")
+	require.NoError(t, err)
+	require.Contains(t, string(stateJSON), `"health":"disabled"`)
+	require.NotContains(t, string(stateJSON), `"cleanup_pending"`)
+}
+
+func TestConfigureStopFailurePersistsPendingCleanupForRestart(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	socketDir := shortSocketDir(t)
+	failingRunner := &statefulCleanupRunner{
+		stopErr:    errors.New("injected configure stop failure"),
+		cleanupErr: errors.New("injected configure cleanup failure"),
+	}
+	first, err := NewSupervisor(Config{RootDir: root, SocketDir: socketDir, PublicKey: publicKey, Runner: failingRunner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	_, err = first.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("configure-pending"), "nat-egress", "1.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = first.Handle(context.Background(), "plugin.enable", testEnvelope("enable-configure-pending", "nat-egress", "1.0.0", 1, nil))
+	require.NoError(t, err)
+	_, err = first.Handle(context.Background(), "plugin.configure", testEnvelope("configure-pending", "nat-egress", "1.0.0", 2, []byte(`{}`)))
+	require.ErrorContains(t, err, "injected configure cleanup failure")
+	stateJSON, inspectErr := first.inspect("nat-egress")
+	require.NoError(t, inspectErr)
+	require.Contains(t, string(stateJSON), `"cleanup_pending":true`)
+	require.Contains(t, string(stateJSON), `"desired_revision":2`)
+	require.Contains(t, string(stateJSON), `"observed_revision":1`)
+	require.ErrorContains(t, first.Close(context.Background()), "injected configure cleanup failure")
+
+	recoveryRunner := &statefulCleanupRunner{}
+	restarted, err := NewSupervisor(Config{RootDir: root, SocketDir: socketDir, PublicKey: publicKey, Runner: recoveryRunner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = restarted.Close(context.Background()) })
+	stateJSON, err = restarted.inspect("nat-egress")
+	require.NoError(t, err)
+	require.NotContains(t, string(stateJSON), `"cleanup_pending"`)
+	require.Contains(t, string(stateJSON), `"health":"disabled"`)
+}
+
+func TestStartHealthFailurePersistsPendingCleanup(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	runner := &statefulCleanupRunner{cleanupErr: errors.New("injected health cleanup failure")}
+	supervisor, err := NewSupervisor(Config{
+		RootDir: t.TempDir(), SocketDir: shortSocketDir(t), PublicKey: publicKey,
+		Runner: runner, Health: failingHealth{err: errors.New("injected startup health failure")},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = supervisor.Close(context.Background()) })
+	_, err = supervisor.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("health-pending"), "nat-egress", "1.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-health-pending", "nat-egress", "1.0.0", 1, nil))
+	require.ErrorContains(t, err, "injected startup health failure")
+	stateJSON, inspectErr := supervisor.inspect("nat-egress")
+	require.NoError(t, inspectErr)
+	require.Contains(t, string(stateJSON), `"cleanup_pending":true`)
+	require.Contains(t, string(stateJSON), `"cleanup_version":"1.0.0"`)
+	require.Contains(t, string(stateJSON), `"health":"unhealthy"`)
+}
+
+func TestPendingCleanupUsesRecordedPluginVersion(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	socketDir := shortSocketDir(t)
+	firstRunner := &statefulCleanupRunner{cleanupErr: errors.New("injected pre-restart cleanup failure")}
+	first, err := NewSupervisor(Config{RootDir: root, SocketDir: socketDir, PublicKey: publicKey, Runner: firstRunner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	for _, version := range []string{"1.0.0", "2.0.0"} {
+		_, err = first.Install(context.Background(), signedRequestWithCapabilities(
+			t, privateKey, []byte("cleanup-version-"+version), "nat-egress", version, []string{"plugin.runtime-state", "plugin.cleanup"},
+		))
+		require.NoError(t, err)
+	}
+	first.markCleanupPending("nat-egress", "2.0.0", errors.New("injected target-version cleanup failure"))
+	require.ErrorContains(t, first.Close(context.Background()), "injected pre-restart cleanup failure")
+
+	recoveryRunner := &statefulCleanupRunner{}
+	restarted, err := NewSupervisor(Config{RootDir: root, SocketDir: socketDir, PublicKey: publicKey, Runner: recoveryRunner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = restarted.Close(context.Background()) })
+	require.Equal(t, []string{filepath.Join(root, "nat-egress", "2.0.0", pluginBinaryName)}, recoveryRunner.CleanupBinaries())
+}
+
+func TestLifecycleOperationRecoversRecordedVersionBeforeStartingDesiredVersion(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	runner := &statefulCleanupRunner{}
+	supervisor, err := NewSupervisor(Config{RootDir: root, SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: runner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = supervisor.Close(context.Background()) })
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("legacy-v1"), "nat-egress", "1.0.0"))
+	require.NoError(t, err)
+	_, err = supervisor.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("stateful-v2"), "nat-egress", "2.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	supervisor.markCleanupPending("nat-egress", "2.0.0", errors.New("injected failed v2 cleanup"))
+
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-v1-after-v2-failure", "nat-egress", "1.0.0", 1, nil))
+	require.NoError(t, err)
+	require.Equal(t, []string{filepath.Join(root, "nat-egress", "2.0.0", pluginBinaryName)}, runner.CleanupBinaries())
+	legacyStarts, _, _ := runner.Snapshot()
+	require.Equal(t, 1, legacyStarts)
+	stateJSON, err := supervisor.inspect("nat-egress")
+	require.NoError(t, err)
+	require.Contains(t, string(stateJSON), `"desired_version":"1.0.0"`)
+	require.Contains(t, string(stateJSON), `"health":"healthy"`)
+	require.NotContains(t, string(stateJSON), `"cleanup_pending"`)
+}
+
+func TestSupervisorClosePersistsCleanupFailureAndRestoresAfterRecovery(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	socketDir := shortSocketDir(t)
+	failingRunner := &statefulCleanupRunner{cleanupErr: errors.New("injected close cleanup failure")}
+	first, err := NewSupervisor(Config{RootDir: root, SocketDir: socketDir, PublicKey: publicKey, Runner: failingRunner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	_, err = first.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("close-cleanup"), "nat-egress", "1.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = first.Handle(context.Background(), "plugin.enable", testEnvelope("enable-close-cleanup", "nat-egress", "1.0.0", 1, nil))
+	require.NoError(t, err)
+	err = first.Close(context.Background())
+	require.ErrorContains(t, err, "injected close cleanup failure")
+	stateJSON, inspectErr := first.inspect("nat-egress")
+	require.NoError(t, inspectErr)
+	require.Contains(t, string(stateJSON), `"enabled":true`)
+	require.Contains(t, string(stateJSON), `"cleanup_pending":true`)
+
+	recoveryRunner := &statefulCleanupRunner{}
+	restarted, err := NewSupervisor(Config{RootDir: root, SocketDir: socketDir, PublicKey: publicKey, Runner: recoveryRunner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = restarted.Close(context.Background()) })
+	legacyStarts, statePaths, cleanupPaths := recoveryRunner.Snapshot()
+	require.Zero(t, legacyStarts)
+	require.Len(t, cleanupPaths, 1)
+	require.Len(t, statePaths, 1, "enabled intent should restore only after pending cleanup succeeds")
+	stateJSON, err = restarted.inspect("nat-egress")
+	require.NoError(t, err)
+	require.Contains(t, string(stateJSON), `"enabled":true`)
+	require.Contains(t, string(stateJSON), `"health":"healthy"`)
+	require.NotContains(t, string(stateJSON), `"cleanup_pending"`)
+}
+
+func TestSupervisorCloseSerializesWithCrashCleanup(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	entered := make(chan struct{}, 1)
+	release := make(chan struct{})
+	runner := &statefulCleanupRunner{cleanupEnter: entered, cleanupWait: release}
+	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: runner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	_, err = supervisor.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("serialized-cleanup"), "nat-egress", "1.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-serialized-cleanup", "nat-egress", "1.0.0", 1, nil))
+	require.NoError(t, err)
+	runner.Process().Crash(errors.New("injected serialized crash"))
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("crash cleanup did not start")
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- supervisor.Close(context.Background()) }()
+	time.Sleep(30 * time.Millisecond)
+	calls, maximum := runner.CleanupStats()
+	require.Equal(t, 1, calls)
+	require.Equal(t, 1, maximum)
+	close(release)
+	require.NoError(t, <-closed)
+	calls, maximum = runner.CleanupStats()
+	require.Equal(t, 1, calls)
+	require.Equal(t, 1, maximum)
+}
+
 func TestVerifyManifestMatchesControlCanonicalContract(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
@@ -591,6 +1005,87 @@ func TestInstallStagesNewVersionUntilUpdate(t *testing.T) {
 	require.Contains(t, string(result), `"previous_version":"1.0.0"`)
 	require.True(t, oldProcess.Stopped())
 	require.Equal(t, 2, runner.Starts())
+}
+
+func TestUpdateCleansStatefulVersionBeforeStartingLegacyTarget(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	runner := &statefulCleanupRunner{}
+	supervisor, err := NewSupervisor(Config{RootDir: root, SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: runner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = supervisor.Close(context.Background()) })
+
+	_, err = supervisor.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("stateful-v1"), "nat-egress", "1.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-stateful-v1", "nat-egress", "1.0.0", 1, nil))
+	require.NoError(t, err)
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("legacy-v2"), "nat-egress", "2.0.0"))
+	require.NoError(t, err)
+
+	_, err = supervisor.Handle(context.Background(), "plugin.update", testEnvelope("update-to-legacy", "nat-egress", "2.0.0", 2, nil))
+	require.NoError(t, err)
+	legacyStarts, statePaths, cleanupPaths := runner.Snapshot()
+	require.Equal(t, 1, legacyStarts)
+	require.Equal(t, []string{filepath.Join(root, "nat-egress", "runtime-state", "ownership.json")}, statePaths)
+	require.Equal(t, statePaths, cleanupPaths)
+	stateJSON, err := supervisor.inspect("nat-egress")
+	require.NoError(t, err)
+	require.Contains(t, string(stateJSON), `"desired_version":"2.0.0"`)
+}
+
+func TestUpdateRefusesVersionSwitchWhenDisabledCleanupFails(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	runner := &statefulCleanupRunner{cleanupErr: errors.New("injected disabled cleanup failure")}
+	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: runner, Health: &fakeHealth{}})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = supervisor.Close(context.Background()) })
+
+	_, err = supervisor.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("disabled-v1"), "nat-egress", "1.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("legacy-v2"), "nat-egress", "2.0.0"))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.update", testEnvelope("update-disabled-cleanup-failure", "nat-egress", "2.0.0", 1, nil))
+	require.ErrorContains(t, err, "injected disabled cleanup failure")
+	stateJSON, inspectErr := supervisor.inspect("nat-egress")
+	require.NoError(t, inspectErr)
+	require.Contains(t, string(stateJSON), `"desired_version":"1.0.0"`)
+	require.Contains(t, string(stateJSON), `"health":"unhealthy"`)
+}
+
+func TestUpdateDoesNotStartLegacyRollbackWhileTargetCleanupIsPending(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	runner := &statefulCleanupRunner{cleanupErr: errors.New("injected target cleanup failure")}
+	health := &failAfterHealth{failAfter: 1, err: errors.New("injected target health failure")}
+	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), SocketDir: shortSocketDir(t), PublicKey: publicKey, Runner: runner, Health: health})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = supervisor.Close(context.Background()) })
+
+	_, err = supervisor.Install(context.Background(), signedRequest(t, privateKey, []byte("legacy-v1"), "nat-egress", "1.0.0"))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.enable", testEnvelope("enable-legacy-before-target", "nat-egress", "1.0.0", 1, nil))
+	require.NoError(t, err)
+	_, err = supervisor.Install(context.Background(), signedRequestWithCapabilities(
+		t, privateKey, []byte("stateful-v2"), "nat-egress", "2.0.0", []string{"plugin.runtime-state", "plugin.cleanup"},
+	))
+	require.NoError(t, err)
+	_, err = supervisor.Handle(context.Background(), "plugin.update", testEnvelope("update-target-cleanup-pending", "nat-egress", "2.0.0", 2, nil))
+	require.ErrorContains(t, err, "injected target cleanup failure")
+	legacyStarts, statePaths, _ := runner.Snapshot()
+	require.Equal(t, 1, legacyStarts, "legacy v1 must not be started again while v2 cleanup remains pending")
+	require.Len(t, statePaths, 1)
+	stateJSON, inspectErr := supervisor.inspect("nat-egress")
+	require.NoError(t, inspectErr)
+	require.Contains(t, string(stateJSON), `"desired_version":"1.0.0"`)
+	require.Contains(t, string(stateJSON), `"cleanup_pending":true`)
+	require.Contains(t, string(stateJSON), `"cleanup_version":"2.0.0"`)
+	require.Contains(t, string(stateJSON), `"enabled":false`)
 }
 
 type versionRunner struct {

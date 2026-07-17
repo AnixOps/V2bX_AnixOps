@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -87,10 +88,37 @@ func TestCommandRunnerStopReportsSuccessAfterForcedKill(t *testing.T) {
 	}
 	dir := t.TempDir()
 	binary := filepath.Join(dir, "plugin")
-	require.NoError(t, os.WriteFile(binary, []byte("#!/bin/sh\ntrap '' INT TERM\nwhile :; do sleep 1; done\n"), 0o750))
+	ready := filepath.Join(dir, "ready")
+	script := fmt.Sprintf("#!/bin/sh\ntrap '' INT TERM\n: > %q\nwhile :; do sleep 1; done\n", ready)
+	require.NoError(t, os.WriteFile(binary, []byte(script), 0o750))
 	process, err := (CommandRunner{}).Start(context.Background(), binary, filepath.Join(dir, "plugin.sock"), filepath.Join(dir, "config.json"))
 	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(ready)
+		return statErr == nil
+	}, time.Second, 10*time.Millisecond)
 	stopCtx, cancelStop := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancelStop()
 	require.NoError(t, process.Stop(stopCtx), "a killed process is stopped successfully even when graceful shutdown timed out")
+}
+
+func TestCommandRunnerStopReportsPluginCleanupFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix process test")
+	}
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "plugin")
+	ready := filepath.Join(dir, "ready")
+	script := fmt.Sprintf("#!/bin/sh\ntrap 'exit 17' INT TERM\n: > %q\nwhile :; do sleep 1; done\n", ready)
+	require.NoError(t, os.WriteFile(binary, []byte(script), 0o750))
+	process, err := (CommandRunner{}).Start(context.Background(), binary, filepath.Join(dir, "plugin.sock"), filepath.Join(dir, "config.json"))
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(ready)
+		return statErr == nil
+	}, time.Second, 10*time.Millisecond)
+	stopCtx, cancelStop := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelStop()
+	err = process.Stop(stopCtx)
+	require.ErrorContains(t, err, "exit status 17")
 }

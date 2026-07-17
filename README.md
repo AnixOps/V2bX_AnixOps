@@ -17,6 +17,8 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 - 节点自动注册、签名鉴权与凭证加密存储
 - ACME 证书申请、续期和自定义证书
 - REST、WebSocket、旧版 gRPC API 与 `anix.agent.v1` 双向 gRPC 控制流
+- 可选的官方签名插件 Supervisor，以及真实的 `nftables-forward` 和
+  `nat-egress` Linux 插件运行时
 - Linux、Windows 和 macOS 构建
 
 ## v3 Alpha 范围
@@ -26,6 +28,32 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 心跳、受限操作、ACK 和观察状态；现有 REST/UniProxy、旧版 gRPC 与 WebSocket
 链路仍作为数据面和回退路径。生产部署应先在少量节点验证 TLS、重连和操作幂等
 性，再逐步扩大范围。
+
+## 官方插件运行时预览
+
+官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
+真实的 `nftables-forward` 与 `nat-egress` 独立进程；后者负责 nftables
+IPv4/IPv6 masquerade、fwmark 策略路由和绑定出口接口的带标记健康探测。业务
+流量由内核网络栈承载，不经过 Supervisor 进程。
+
+`nat-egress` 清单声明 `plugin.runtime-state` 和 `plugin.cleanup`。Supervisor
+为它保留稳定的私有 ownership journal，并在崩溃、禁用、配置变更、升级和关闭
+时调用签名 cleanup 入口。清理失败会持久化 `cleanup_pending`，插件保持禁用；
+升级目标版本的清理成功后才允许自动启动旧版本，避免旧版本覆盖可能残留的路由
+或 NAT 状态。
+
+特权 namespace 验收已覆盖 marked forwarded traffic、wrong-mark isolation、
+policy route、masquerade、正常退出清理和既有状态恢复：
+
+```bash
+sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
+  bash plugin/nategress/namespace_acceptance.sh
+```
+
+该能力仍是预览：生产启用必须使用正式签名 Release，并完成 mark producer、
+FORWARD 防火墙策略、分批 canary 和运维审批；`gost-mesh` WSS/TUIC/QUIC
+目前也只有包契约，尚无真实 Agent 插件运行时。
+完整生命周期契约见 [官方插件 Supervisor](docs/PLUGIN_SUPERVISOR.md)。
 
 ## 默认路径
 
@@ -185,6 +213,7 @@ git diff --exit-code -- api/grpc/v2boardpb api/grpc/agent/v1
 - [Release 安装指南](docs/INSTALL.md)
 - [AnixOps Agent 迁移指南](docs/ANIX_AGENT_MIGRATION.md)
 - [运行时与协议迁移](docs/MIGRATION.md)
+- [官方插件 Supervisor](docs/PLUGIN_SUPERVISOR.md)
 - [API 文档](API_DOCUMENTATION.md)
 - [WireGuard 运行时测试](docs/WIREGUARD_RUNTIME_TESTS.md)
 

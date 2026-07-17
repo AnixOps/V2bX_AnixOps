@@ -129,6 +129,9 @@ func (m Manifest) validateForRuntime(goos, goarch string) error {
 	if err := validatePluginRelationships(m.ID, m.Dependencies, m.Conflicts); err != nil {
 		return err
 	}
+	if containsString(m.Capabilities, "plugin.cleanup") && !containsString(m.Capabilities, "plugin.runtime-state") {
+		return errors.New("plugin.cleanup capability requires plugin.runtime-state")
+	}
 	if err := validateManifestPermissions(m.ID, m.Permissions); err != nil {
 		return err
 	}
@@ -350,6 +353,14 @@ type Runner interface {
 	Start(context.Context, string, string, string) (Process, error)
 }
 
+type StatefulRunner interface {
+	StartWithState(context.Context, string, string, string, string) (Process, error)
+}
+
+type CleanupRunner interface {
+	Cleanup(context.Context, string, string, string, string) error
+}
+
 type HealthChecker interface {
 	Check(context.Context, string) error
 }
@@ -374,6 +385,8 @@ type PluginState struct {
 	DesiredRevision  uint64    `json:"desired_revision"`
 	ObservedRevision uint64    `json:"observed_revision"`
 	LastError        string    `json:"last_error"`
+	CleanupPending   bool      `json:"cleanup_pending,omitempty"`
+	CleanupVersion   string    `json:"cleanup_version,omitempty"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
 
@@ -457,6 +470,7 @@ func NewSupervisor(config Config) (*Supervisor, error) {
 	if err := supervisor.load(); err != nil {
 		return nil, err
 	}
+	supervisor.recoverPendingCleanup()
 	supervisor.restoreEnabled()
 	return supervisor, nil
 }
@@ -659,6 +673,12 @@ func (s *Supervisor) Handle(ctx context.Context, kind string, envelope *agent.Op
 	var err error
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		err = ctxErr
+	} else if operationMutatesState(kind) {
+		if recoveryErr := s.recoverPluginCleanup(envelope.PluginID); recoveryErr != nil {
+			err = fmt.Errorf("recover pending plugin cleanup before %s: %w", kind, recoveryErr)
+		} else {
+			result, err = s.handleOperation(ctx, kind, envelope)
+		}
 	} else {
 		result, err = s.handleOperation(ctx, kind, envelope)
 	}
@@ -765,11 +785,24 @@ func (s *Supervisor) configure(ctx context.Context, envelope *agent.OperationEnv
 	s.mu.Lock()
 	s.removeProcessLocked(state.ID)
 	s.mu.Unlock()
-	if process != nil {
-		if err := process.Stop(ctx); err != nil {
-			s.recordConfigureStopFailure(original, err)
-			return nil, fmt.Errorf("stop plugin before configure: %w", err)
+	manifest, verifyErr := s.verifyInstalledVersion(original.ID, original.DesiredVersion)
+	if verifyErr != nil {
+		var stopErr error
+		if process != nil {
+			stopErr = process.Stop(ctx)
 		}
+		transitionErr := errors.Join(verifyErr, stopErr)
+		s.recordTransitionFailure(original, envelope.Revision, transitionErr, original.DesiredVersion)
+		return nil, fmt.Errorf("verify current plugin before configure: %w", transitionErr)
+	}
+	cleanupPending, transitionErr := s.stopAndCleanupInstalledVersion(ctx, manifest, original, process)
+	if transitionErr != nil {
+		cleanupVersion := ""
+		if cleanupPending {
+			cleanupVersion = original.DesiredVersion
+		}
+		s.recordTransitionFailure(original, envelope.Revision, transitionErr, cleanupVersion)
+		return nil, fmt.Errorf("stop plugin before configure: %w", transitionErr)
 	}
 	if err := removeSocket(s.socketPath(state.ID)); err != nil {
 		return nil, s.rollbackConfiguration(original, envelope, configPath, oldConfig, oldConfigExists, fmt.Errorf("remove old plugin socket: %w", err))
@@ -783,7 +816,7 @@ func (s *Supervisor) configure(ctx context.Context, envelope *agent.OperationEnv
 	}
 
 	state.ConfigHash, state.DesiredRevision, state.UpdatedAt, state.LastError = envelope.ConfigHash, envelope.Revision, s.now(), ""
-	state.ObservedRevision, state.Health, state.Enabled = maxRevision(state.ObservedRevision, envelope.Revision), "healthy", true
+	state.ObservedRevision, state.Health, state.Enabled, state.CleanupPending, state.CleanupVersion = maxRevision(state.ObservedRevision, envelope.Revision), "healthy", true, false, ""
 	s.mu.Lock()
 	s.setProcessLocked(state.ID, newProcess)
 	s.state.Plugins[state.ID] = state
@@ -842,6 +875,7 @@ func (s *Supervisor) rollbackConfiguration(original PluginState, envelope *agent
 
 	s.mu.Lock()
 	state := original
+	mergePendingCleanup(&state, s.state.Plugins[original.ID])
 	state.DesiredRevision = maxRevision(state.DesiredRevision, envelope.Revision)
 	state.UpdatedAt = s.now()
 	state.LastError = operationErr.Error()
@@ -892,9 +926,23 @@ func (s *Supervisor) enable(ctx context.Context, envelope *agent.OperationEnvelo
 		s.mu.Lock()
 		s.removeProcessLocked(state.ID)
 		s.mu.Unlock()
-		if err := stopProcess(process); err != nil {
-			s.recordConfigureStopFailure(state, err)
-			return nil, fmt.Errorf("stop unhealthy plugin process: %w", err)
+		manifest, verifyErr := s.verifyInstalledVersion(state.ID, state.DesiredVersion)
+		if verifyErr != nil {
+			stopErr := stopProcess(process)
+			transitionErr := errors.Join(verifyErr, stopErr)
+			s.recordTransitionFailure(state, envelope.Revision, transitionErr, state.DesiredVersion)
+			return nil, fmt.Errorf("verify unhealthy plugin before restart: %w", transitionErr)
+		}
+		stopCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+		cleanupPending, transitionErr := s.stopAndCleanupInstalledVersion(stopCtx, manifest, state, process)
+		cancel()
+		if transitionErr != nil {
+			cleanupVersion := ""
+			if cleanupPending {
+				cleanupVersion = state.DesiredVersion
+			}
+			s.recordTransitionFailure(state, envelope.Revision, transitionErr, cleanupVersion)
+			return nil, fmt.Errorf("stop unhealthy plugin process: %w", transitionErr)
 		}
 		if err := removeSocket(s.socketPath(state.ID)); err != nil {
 			s.recordConfigureStopFailure(state, err)
@@ -910,7 +958,7 @@ func (s *Supervisor) enable(ctx context.Context, envelope *agent.OperationEnvelo
 	s.mu.Lock()
 	state = s.state.Plugins[state.ID]
 	previous := state
-	state.Enabled, state.Health, state.ObservedVersion = true, "healthy", state.DesiredVersion
+	state.Enabled, state.Health, state.ObservedVersion, state.CleanupPending, state.CleanupVersion = true, "healthy", state.DesiredVersion, false, ""
 	state.DesiredRevision, state.ObservedRevision = maxRevision(state.DesiredRevision, envelope.Revision), maxRevision(state.ObservedRevision, envelope.Revision)
 	state.UpdatedAt, state.LastError = s.now(), ""
 	s.setProcessLocked(state.ID, process)
@@ -942,20 +990,41 @@ func (s *Supervisor) disable(ctx context.Context, envelope *agent.OperationEnvel
 	process := s.processes[state.ID]
 	s.removeProcessLocked(state.ID)
 	s.mu.Unlock()
+	manifest, verifyErr := s.verifyInstalledVersion(state.ID, state.DesiredVersion)
+	cleanupRequired := verifyErr == nil && manifestSupportsCapability(manifest, "plugin.cleanup")
+	var stopErr error
 	if process != nil {
-		if err := process.Stop(ctx); err != nil {
-			s.recordConfigureStopFailure(state, err)
-			return nil, err
-		}
+		stopErr = process.Stop(ctx)
+	}
+	var cleanupErr error
+	if cleanupRequired {
+		cleanupErr = s.cleanupInstalledVersion(manifest, state.ID, state.DesiredVersion)
 	}
 	socketErr := removeSocket(s.socketPath(envelope.PluginID))
+	operationErr := errors.Join(verifyErr, stopErr, cleanupErr, socketErr)
+	cleanupSafe := verifyErr == nil && stopErr == nil && (!cleanupRequired || cleanupErr == nil)
 	s.mu.Lock()
 	state = s.state.Plugins[envelope.PluginID]
-	state.Enabled, state.Health = false, "disabled"
-	state.DesiredRevision, state.ObservedRevision, state.UpdatedAt = maxRevision(state.DesiredRevision, envelope.Revision), maxRevision(state.ObservedRevision, envelope.Revision), s.now()
+	state.Enabled = false
+	if cleanupSafe && socketErr == nil {
+		state.Health = "disabled"
+	} else {
+		state.Health = "unhealthy"
+	}
+	state.DesiredRevision, state.UpdatedAt = maxRevision(state.DesiredRevision, envelope.Revision), s.now()
+	if cleanupSafe && socketErr == nil {
+		state.ObservedRevision = maxRevision(state.ObservedRevision, envelope.Revision)
+	}
 	state.LastError = ""
-	if socketErr != nil {
-		state.LastError = socketErr.Error()
+	if cleanupSafe && socketErr == nil {
+		state.CleanupPending = false
+		state.CleanupVersion = ""
+	} else if cleanupRequired && cleanupErr != nil {
+		state.CleanupPending = true
+		state.CleanupVersion = state.DesiredVersion
+	}
+	if operationErr != nil {
+		state.LastError = operationErr.Error()
 	}
 	s.state.Plugins[envelope.PluginID] = state
 	err := s.persistLocked()
@@ -963,8 +1032,8 @@ func (s *Supervisor) disable(ctx context.Context, envelope *agent.OperationEnvel
 	if err != nil {
 		return nil, err
 	}
-	if socketErr != nil {
-		return nil, socketErr
+	if operationErr != nil {
+		return nil, operationErr
 	}
 	return json.Marshal(state)
 }
@@ -980,18 +1049,27 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		s.mu.Unlock()
 		return s.enable(ctx, envelope)
 	}
-	if err := s.verifyInstalledVersion(state.ID, envelope.TargetVersion); err != nil {
-		s.mu.Unlock()
-		return nil, fmt.Errorf("target plugin version is not installed or trusted: %w", err)
-	}
 	original := state
 	oldProcess := s.processes[state.ID]
 	s.mu.Unlock()
+	targetManifest, err := s.verifyInstalledVersion(original.ID, envelope.TargetVersion)
+	if err != nil {
+		return nil, fmt.Errorf("target plugin version is not installed or trusted: %w", err)
+	}
+	currentManifest, err := s.verifyInstalledVersion(original.ID, original.DesiredVersion)
+	if err != nil {
+		return nil, fmt.Errorf("current plugin version is not installed or trusted: %w", err)
+	}
 
 	if !original.Enabled {
+		if cleanupErr := s.cleanupInstalledVersion(currentManifest, original.ID, original.DesiredVersion); cleanupErr != nil {
+			transitionErr := fmt.Errorf("cleanup current plugin version before update: %w", cleanupErr)
+			s.recordTransitionFailure(original, envelope.Revision, transitionErr, original.DesiredVersion)
+			return nil, transitionErr
+		}
 		state = original
 		state.PreviousVersion, state.DesiredVersion = original.DesiredVersion, envelope.TargetVersion
-		state.Health, state.LastError = "installed", ""
+		state.Health, state.LastError, state.CleanupPending, state.CleanupVersion = "installed", "", false, ""
 		state.DesiredRevision, state.ObservedRevision = maxRevision(state.DesiredRevision, envelope.Revision), maxRevision(state.ObservedRevision, envelope.Revision)
 		state.UpdatedAt = s.now()
 		s.mu.Lock()
@@ -1007,14 +1085,21 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 		return json.Marshal(state)
 	}
 
+	var stopErr error
 	if oldProcess != nil {
 		s.mu.Lock()
 		s.removeProcessLocked(original.ID)
 		s.mu.Unlock()
-		if err := oldProcess.Stop(ctx); err != nil {
-			s.recordConfigureStopFailure(original, err)
-			return nil, fmt.Errorf("stop current plugin version: %w", err)
+		stopErr = oldProcess.Stop(ctx)
+	}
+	cleanupErr := s.cleanupInstalledVersion(currentManifest, original.ID, original.DesiredVersion)
+	if transitionErr := errors.Join(stopErr, cleanupErr); transitionErr != nil {
+		cleanupVersion := ""
+		if cleanupErr != nil {
+			cleanupVersion = original.DesiredVersion
 		}
+		s.recordTransitionFailure(original, envelope.Revision, transitionErr, cleanupVersion)
+		return nil, fmt.Errorf("prepare current plugin version for update: %w", transitionErr)
 	}
 	if err := removeSocket(s.socketPath(original.ID)); err != nil {
 		s.recordConfigureStopFailure(original, err)
@@ -1023,14 +1108,24 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 
 	newProcess, startErr := s.startVersion(ctx, original.ID, envelope.TargetVersion)
 	if startErr != nil {
+		s.mu.Lock()
+		cleanupBlocked := s.state.Plugins[original.ID].CleanupPending
+		s.mu.Unlock()
+		if cleanupBlocked {
+			recoveryErr := s.recoverPluginCleanup(original.ID)
+			operationErr := errors.Join(fmt.Errorf("start updated plugin version: %w", startErr), recoveryErr)
+			s.recordUpdateRollbackBlocked(original, envelope.Revision, operationErr)
+			return nil, operationErr
+		}
 		rollbackProcess, rollbackErr := s.startVersion(context.Background(), original.ID, original.DesiredVersion)
 		s.mu.Lock()
 		state = original
+		mergePendingCleanup(&state, s.state.Plugins[original.ID])
 		state.DesiredRevision = maxRevision(state.DesiredRevision, envelope.Revision)
 		state.UpdatedAt = s.now()
 		state.LastError = fmt.Sprintf("update to %s failed: %v", envelope.TargetVersion, startErr)
 		if rollbackErr == nil {
-			state.Enabled, state.Health, state.ObservedVersion = true, "healthy", original.DesiredVersion
+			state.Enabled, state.Health, state.ObservedVersion, state.CleanupPending, state.CleanupVersion = true, "healthy", original.DesiredVersion, false, ""
 			state.ObservedRevision = maxRevision(state.ObservedRevision, envelope.Revision)
 			s.setProcessLocked(state.ID, rollbackProcess)
 		} else {
@@ -1048,7 +1143,7 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 
 	state = original
 	state.PreviousVersion, state.DesiredVersion = original.DesiredVersion, envelope.TargetVersion
-	state.Enabled, state.Health, state.ObservedVersion = true, "healthy", envelope.TargetVersion
+	state.Enabled, state.Health, state.ObservedVersion, state.CleanupPending, state.CleanupVersion = true, "healthy", envelope.TargetVersion, false, ""
 	state.DesiredRevision, state.ObservedRevision = maxRevision(state.DesiredRevision, envelope.Revision), maxRevision(state.ObservedRevision, envelope.Revision)
 	state.UpdatedAt, state.LastError = s.now(), ""
 	s.mu.Lock()
@@ -1061,16 +1156,80 @@ func (s *Supervisor) update(ctx context.Context, envelope *agent.OperationEnvelo
 	}
 	s.mu.Unlock()
 	if persistErr != nil {
-		_ = stopProcess(newProcess)
-		rollbackProcess, rollbackErr := s.startVersion(context.Background(), original.ID, original.DesiredVersion)
-		if rollbackErr == nil {
-			s.mu.Lock()
-			s.setProcessLocked(original.ID, rollbackProcess)
-			s.mu.Unlock()
+		stopCtx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+		cleanupPending, stopCleanupErr := s.stopAndCleanupInstalledVersion(stopCtx, targetManifest, PluginState{
+			ID: original.ID, DesiredVersion: envelope.TargetVersion,
+		}, newProcess)
+		cancel()
+		if stopCleanupErr != nil {
+			if cleanupPending {
+				s.markCleanupPending(original.ID, envelope.TargetVersion, stopCleanupErr)
+			}
+			var recoveryErr error
+			if cleanupPending {
+				recoveryErr = s.recoverPluginCleanup(original.ID)
+			}
+			operationErr := errors.Join(persistErr, stopCleanupErr, recoveryErr)
+			s.recordUpdateRollbackBlocked(original, envelope.Revision, operationErr)
+			return nil, operationErr
 		}
-		return nil, errors.Join(persistErr, rollbackErr)
+		rollbackProcess, rollbackErr := s.startVersion(context.Background(), original.ID, original.DesiredVersion)
+		s.mu.Lock()
+		current := s.state.Plugins[original.ID]
+		if cleanupPending {
+			current.CleanupPending, current.CleanupVersion = true, envelope.TargetVersion
+		}
+		if rollbackErr == nil {
+			current.Enabled, current.Health, current.ObservedVersion = true, "healthy", original.DesiredVersion
+			current.CleanupPending, current.CleanupVersion = false, ""
+			current.LastError = ""
+			s.setProcessLocked(original.ID, rollbackProcess)
+		} else {
+			current.Enabled, current.Health = false, "unhealthy"
+			current.LastError = errors.Join(stopCleanupErr, rollbackErr).Error()
+		}
+		s.state.Plugins[original.ID] = current
+		statePersistErr := s.persistLocked()
+		s.mu.Unlock()
+		return nil, errors.Join(persistErr, stopCleanupErr, rollbackErr, statePersistErr)
 	}
 	return json.Marshal(state)
+}
+
+func (s *Supervisor) recordTransitionFailure(original PluginState, revision uint64, operationErr error, cleanupVersion string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := original
+	state.Enabled, state.Health = false, "unhealthy"
+	if cleanupVersion != "" {
+		state.CleanupPending, state.CleanupVersion = true, cleanupVersion
+	}
+	state.DesiredRevision = maxRevision(state.DesiredRevision, revision)
+	state.LastError, state.UpdatedAt = operationErr.Error(), s.now()
+	s.removeProcessLocked(state.ID)
+	s.state.Plugins[state.ID] = state
+	_ = s.persistLocked()
+}
+
+func (s *Supervisor) recordUpdateRollbackBlocked(original PluginState, revision uint64, operationErr error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state := original
+	mergePendingCleanup(&state, s.state.Plugins[original.ID])
+	state.Enabled, state.Health = false, "unhealthy"
+	state.DesiredRevision = maxRevision(state.DesiredRevision, revision)
+	state.LastError, state.UpdatedAt = operationErr.Error(), s.now()
+	s.removeProcessLocked(state.ID)
+	s.state.Plugins[state.ID] = state
+	_ = s.persistLocked()
+}
+
+func mergePendingCleanup(target *PluginState, current PluginState) {
+	if target == nil || !current.CleanupPending {
+		return
+	}
+	target.CleanupPending = true
+	target.CleanupVersion = current.CleanupVersion
 }
 
 func (s *Supervisor) rollback(ctx context.Context, envelope *agent.OperationEnvelope) (json.RawMessage, error) {
@@ -1133,26 +1292,54 @@ func (s *Supervisor) Close(ctx context.Context) error {
 		return nil
 	}
 	s.closed = true
-	processes := make(map[string]Process, len(s.processes))
-	for id, process := range s.processes {
-		processes[id] = process
-	}
+	pluginIDs := make(map[string]struct{}, len(s.processes))
 	for id := range s.processes {
-		s.removeProcessLocked(id)
+		pluginIDs[id] = struct{}{}
+	}
+	for id, state := range s.state.Plugins {
+		if state.CleanupPending {
+			pluginIDs[id] = struct{}{}
+		}
 	}
 	s.mu.Unlock()
+
 	var result error
-	for id, process := range processes {
-		err := process.Stop(ctx)
-		result = errors.Join(result, err)
+	for id := range pluginIDs {
+		unlockPlugin := s.lockPlugin(id)
 		s.mu.Lock()
-		state := s.state.Plugins[id]
-		state.Health, state.LastError, state.UpdatedAt = "stopped", "", s.now()
-		if err != nil {
-			state.Health, state.LastError = "unhealthy", err.Error()
+		state, ok := s.state.Plugins[id]
+		process := s.processes[id]
+		if process != nil {
+			s.removeProcessLocked(id)
 		}
-		s.state.Plugins[id] = state
 		s.mu.Unlock()
+
+		if ok && process != nil {
+			manifest, verifyErr := s.verifyInstalledVersion(id, state.DesiredVersion)
+			stopErr := process.Stop(ctx)
+			var cleanupErr error
+			cleanupCapable := verifyErr == nil && manifestSupportsCapability(manifest, "plugin.cleanup")
+			if cleanupCapable {
+				cleanupErr = s.cleanupInstalledVersion(manifest, id, state.DesiredVersion)
+			}
+			socketErr := removeSocket(s.socketPath(id))
+			operationErr := errors.Join(verifyErr, stopErr, cleanupErr, socketErr)
+			result = errors.Join(result, operationErr)
+			s.mu.Lock()
+			state = s.state.Plugins[id]
+			state.Health, state.LastError, state.UpdatedAt = "stopped", "", s.now()
+			state.CleanupPending, state.CleanupVersion = false, ""
+			if operationErr != nil {
+				state.Health, state.LastError = "unhealthy", operationErr.Error()
+				if verifyErr != nil || (cleanupCapable && (stopErr != nil || cleanupErr != nil)) {
+					state.CleanupPending, state.CleanupVersion = true, state.DesiredVersion
+				}
+			}
+			s.state.Plugins[id] = state
+			s.mu.Unlock()
+		}
+		result = errors.Join(result, s.recoverPluginCleanup(id))
+		unlockPlugin()
 	}
 	s.mu.Lock()
 	result = errors.Join(result, s.persistLocked())
@@ -1165,6 +1352,9 @@ func (s *Supervisor) binaryPath(state PluginState) string {
 }
 func (s *Supervisor) versionDir(id, version string) string {
 	return filepath.Join(s.rootDir, id, version)
+}
+func (s *Supervisor) runtimeStatePath(id string) string {
+	return filepath.Join(s.rootDir, id, "runtime-state", "ownership.json")
 }
 func (s *Supervisor) socketPath(id string) string { return filepath.Join(s.socketDir, id+".sock") }
 
@@ -1194,28 +1384,51 @@ func (s *Supervisor) removeProcessLocked(id string) {
 
 func (s *Supervisor) observeProcessExit(id string, generation uint64, exited <-chan error) {
 	exitErr, _ := <-exited
+	unlockPlugin := s.lockPlugin(id)
+	defer unlockPlugin()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed || s.processesGeneration[id] != generation {
+		s.mu.Unlock()
 		return
 	}
 	s.removeProcessLocked(id)
-	socketErr := removeSocket(s.socketPath(id))
 	state, ok := s.state.Plugins[id]
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	message := "plugin process exited unexpectedly"
 	if exitErr != nil {
 		message += ": " + exitErr.Error()
 	}
-	if socketErr != nil {
-		message += "; remove socket: " + socketErr.Error()
-	}
-	state.Enabled, state.Health = false, "unhealthy"
+	state.Enabled, state.Health, state.CleanupPending, state.CleanupVersion = false, "unhealthy", true, state.DesiredVersion
 	state.LastError, state.UpdatedAt = message, s.now()
 	s.state.Plugins[id] = state
 	_ = s.persistLocked()
+	s.mu.Unlock()
+
+	manifest, verifyErr := s.verifyInstalledVersion(id, state.DesiredVersion)
+	var cleanupErr error
+	if verifyErr == nil && manifestSupportsCapability(manifest, "plugin.cleanup") {
+		cleanupErr = s.cleanupInstalledVersion(manifest, id, state.DesiredVersion)
+	}
+	socketErr := removeSocket(s.socketPath(id))
+	operationErr := errors.Join(verifyErr, cleanupErr, socketErr)
+	s.mu.Lock()
+	state = s.state.Plugins[id]
+	state.CleanupPending = operationErr != nil
+	if operationErr == nil {
+		state.CleanupVersion = ""
+	} else {
+		state.CleanupVersion = state.DesiredVersion
+	}
+	if operationErr != nil {
+		state.LastError += "; cleanup after crash: " + operationErr.Error()
+	}
+	state.UpdatedAt = s.now()
+	s.state.Plugins[id] = state
+	_ = s.persistLocked()
+	s.mu.Unlock()
 }
 
 func (s *Supervisor) load() error {
@@ -1248,6 +1461,9 @@ func (s *Supervisor) load() error {
 		if state.ConfigHash != "" && !validSHA256(state.ConfigHash) {
 			return fmt.Errorf("read plugin supervisor state: invalid config hash for %q", id)
 		}
+		if !safeOptionalSegment(state.CleanupVersion) {
+			return fmt.Errorf("read plugin supervisor state: invalid cleanup version for %q", id)
+		}
 	}
 	for operationID, entry := range s.state.Journal {
 		if entry.OperationID != operationID || strings.TrimSpace(operationID) == "" {
@@ -1268,6 +1484,63 @@ func (s *Supervisor) load() error {
 		return s.persistLocked()
 	}
 	return nil
+}
+
+func (s *Supervisor) recoverPendingCleanup() {
+	s.mu.Lock()
+	pending := make([]string, 0)
+	for id, state := range s.state.Plugins {
+		if state.CleanupPending {
+			pending = append(pending, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, id := range pending {
+		_ = s.recoverPluginCleanup(id)
+	}
+}
+
+func (s *Supervisor) recoverPluginCleanup(id string) error {
+	s.mu.Lock()
+	persisted, ok := s.state.Plugins[id]
+	s.mu.Unlock()
+	if !ok || !persisted.CleanupPending {
+		return nil
+	}
+	cleanupVersion := persisted.CleanupVersion
+	if cleanupVersion == "" {
+		cleanupVersion = persisted.DesiredVersion
+	}
+	manifest, verifyErr := s.verifyInstalledVersion(id, cleanupVersion)
+	var cleanupErr error
+	if verifyErr == nil && manifestSupportsCapability(manifest, "plugin.cleanup") {
+		cleanupErr = s.cleanupInstalledVersion(manifest, id, cleanupVersion)
+	}
+	socketErr := removeSocket(s.socketPath(id))
+	operationErr := errors.Join(verifyErr, cleanupErr, socketErr)
+	s.mu.Lock()
+	state := s.state.Plugins[id]
+	previous := state
+	state.UpdatedAt = s.now()
+	state.CleanupPending = operationErr != nil
+	if operationErr == nil {
+		state.CleanupVersion = ""
+		if state.Enabled {
+			state.Health, state.LastError = "stopped", ""
+		} else {
+			state.Health, state.LastError = "disabled", ""
+		}
+	} else {
+		state.CleanupVersion = cleanupVersion
+		state.Health, state.LastError = "unhealthy", "recover pending plugin cleanup: "+operationErr.Error()
+	}
+	s.state.Plugins[id] = state
+	persistErr := s.persistLocked()
+	if persistErr != nil {
+		s.state.Plugins[id] = previous
+	}
+	s.mu.Unlock()
+	return errors.Join(operationErr, persistErr)
 }
 
 func (s *Supervisor) persistLocked() error {
@@ -1368,7 +1641,8 @@ func (s *Supervisor) rejectStaleRevision(envelope *agent.OperationEnvelope) erro
 }
 
 func (s *Supervisor) startVersion(ctx context.Context, id, version string) (Process, error) {
-	if err := s.verifyInstalledVersion(id, version); err != nil {
+	manifest, err := s.verifyInstalledVersion(id, version)
+	if err != nil {
 		return nil, err
 	}
 	socket := s.socketPath(id)
@@ -1377,56 +1651,143 @@ func (s *Supervisor) startVersion(ctx context.Context, id, version string) (Proc
 	}
 	binary := filepath.Join(s.versionDir(id, version), pluginBinaryName)
 	config := filepath.Join(s.versionDir(id, version), "config.json")
-	process, err := s.runner.Start(ctx, binary, socket, config)
+	var process Process
+	usesRuntimeState := manifestSupportsCapability(manifest, "plugin.runtime-state")
+	usesCleanup := manifestSupportsCapability(manifest, "plugin.cleanup")
+	if usesCleanup {
+		if !usesRuntimeState {
+			return nil, errors.New("plugin.cleanup capability requires plugin.runtime-state")
+		}
+		if _, ok := s.runner.(CleanupRunner); !ok {
+			return nil, errors.New("plugin runner does not support the declared plugin.cleanup capability")
+		}
+	}
+	if usesRuntimeState {
+		stateful, ok := s.runner.(StatefulRunner)
+		if !ok {
+			return nil, errors.New("plugin runner does not support the declared plugin.runtime-state capability")
+		}
+		if err := ensurePrivateDir(filepath.Dir(s.runtimeStatePath(id))); err != nil {
+			return nil, fmt.Errorf("prepare plugin runtime state directory: %w", err)
+		}
+		process, err = stateful.StartWithState(ctx, binary, socket, config, s.runtimeStatePath(id))
+	} else {
+		process, err = s.runner.Start(ctx, binary, socket, config)
+	}
 	if err != nil {
 		return nil, err
 	}
 	if err := s.health.Check(ctx, socket); err != nil {
 		stopErr := stopProcess(process)
-		return nil, errors.Join(fmt.Errorf("plugin health check failed: %w", err), stopErr)
+		cleanupErr := s.cleanupInstalledVersion(manifest, id, version)
+		if manifestSupportsCapability(manifest, "plugin.cleanup") && (stopErr != nil || cleanupErr != nil) {
+			s.markCleanupPending(id, version, errors.Join(stopErr, cleanupErr))
+		}
+		return nil, errors.Join(fmt.Errorf("plugin health check failed: %w", err), stopErr, cleanupErr)
 	}
 	return process, nil
 }
 
-func (s *Supervisor) verifyInstalledVersion(id, version string) error {
+func (s *Supervisor) cleanupInstalledVersion(manifest *Manifest, id, version string) error {
+	if !manifestSupportsCapability(manifest, "plugin.cleanup") {
+		return nil
+	}
+	cleanupRunner, ok := s.runner.(CleanupRunner)
+	if !ok {
+		return errors.New("plugin runner does not support the declared plugin.cleanup capability")
+	}
+	if err := ensurePrivateDir(filepath.Dir(s.runtimeStatePath(id))); err != nil {
+		return fmt.Errorf("prepare plugin runtime state directory: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupTimeout)
+	defer cancel()
+	return cleanupRunner.Cleanup(
+		ctx,
+		filepath.Join(s.versionDir(id, version), pluginBinaryName),
+		s.socketPath(id),
+		filepath.Join(s.versionDir(id, version), "config.json"),
+		s.runtimeStatePath(id),
+	)
+}
+
+func (s *Supervisor) stopAndCleanupInstalledVersion(ctx context.Context, manifest *Manifest, state PluginState, process Process) (bool, error) {
+	var stopErr error
+	if process != nil {
+		stopErr = process.Stop(ctx)
+	}
+	cleanupErr := s.cleanupInstalledVersion(manifest, state.ID, state.DesiredVersion)
+	cleanupPending := manifestSupportsCapability(manifest, "plugin.cleanup") && cleanupErr != nil
+	return cleanupPending, errors.Join(stopErr, cleanupErr)
+}
+
+func (s *Supervisor) markCleanupPending(id, version string, operationErr error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	state, ok := s.state.Plugins[id]
+	if !ok {
+		return
+	}
+	state.Enabled, state.Health, state.CleanupPending, state.CleanupVersion = false, "unhealthy", true, version
+	state.LastError, state.UpdatedAt = operationErr.Error(), s.now()
+	s.removeProcessLocked(id)
+	s.state.Plugins[id] = state
+	_ = s.persistLocked()
+}
+
+func (s *Supervisor) verifyInstalledVersion(id, version string) (*Manifest, error) {
 	if !safeSegment(id) || !safeSegment(version) {
-		return errors.New("plugin id and version must be safe path segments")
+		return nil, errors.New("plugin id and version must be safe path segments")
 	}
 	dir := s.versionDir(id, version)
 	info, err := os.Lstat(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return errors.New("plugin version path is not a real directory")
+		return nil, errors.New("plugin version path is not a real directory")
 	}
 	manifestJSON, err := os.ReadFile(filepath.Join(dir, manifestFileName))
 	if err != nil {
-		return fmt.Errorf("read installed plugin manifest: %w", err)
+		return nil, fmt.Errorf("read installed plugin manifest: %w", err)
 	}
 	signature, err := os.ReadFile(filepath.Join(dir, signatureFileName))
 	if err != nil {
-		return fmt.Errorf("read installed plugin signature: %w", err)
+		return nil, fmt.Errorf("read installed plugin signature: %w", err)
 	}
 	manifest, err := VerifyManifest(string(manifestJSON), strings.TrimSpace(string(signature)), s.publicKey)
 	if err != nil {
-		return fmt.Errorf("verify installed plugin manifest: %w", err)
+		return nil, fmt.Errorf("verify installed plugin manifest: %w", err)
 	}
 	if manifest.ID != id || manifest.Version != version {
-		return errors.New("installed plugin manifest does not match its path")
+		return nil, errors.New("installed plugin manifest does not match its path")
 	}
 	binaryPath := filepath.Join(dir, pluginBinaryName)
 	binaryInfo, err := os.Lstat(binaryPath)
 	if err != nil {
-		return fmt.Errorf("inspect installed plugin artifact: %w", err)
+		return nil, fmt.Errorf("inspect installed plugin artifact: %w", err)
 	}
 	if binaryInfo.Mode()&os.ModeSymlink != 0 || !binaryInfo.Mode().IsRegular() {
-		return errors.New("installed plugin artifact must be a regular file")
+		return nil, errors.New("installed plugin artifact must be a regular file")
 	}
 	if binaryInfo.Mode().Perm()&0o111 == 0 {
-		return errors.New("installed plugin artifact is not executable")
+		return nil, errors.New("installed plugin artifact is not executable")
 	}
-	return verifyInstalledAgentArtifact(*manifest, dir, binaryPath)
+	if err := verifyInstalledAgentArtifact(*manifest, dir, binaryPath); err != nil {
+		return nil, err
+	}
+	return manifest, nil
+}
+
+func manifestSupportsCapability(manifest *Manifest, capability string) bool {
+	if manifest == nil {
+		return false
+	}
+	for _, value := range manifest.Capabilities {
+		if value == capability {
+			return true
+		}
+	}
+	return false
 }
 
 func stopProcess(process Process) error {
@@ -1454,7 +1815,7 @@ func (s *Supervisor) restoreEnabled() {
 	s.mu.Lock()
 	plugins := make([]PluginState, 0, len(s.state.Plugins))
 	for _, state := range s.state.Plugins {
-		if state.Enabled {
+		if state.Enabled && !state.CleanupPending {
 			plugins = append(plugins, state)
 		}
 	}
@@ -1467,7 +1828,7 @@ func (s *Supervisor) restoreEnabled() {
 		if err != nil {
 			state.Health, state.LastError = "unhealthy", fmt.Sprintf("restore enabled plugin: %v", err)
 		} else {
-			state.Health, state.LastError, state.ObservedVersion = "healthy", "", state.DesiredVersion
+			state.Health, state.LastError, state.ObservedVersion, state.CleanupPending, state.CleanupVersion = "healthy", "", state.DesiredVersion, false, ""
 			s.setProcessLocked(state.ID, process)
 		}
 		s.state.Plugins[state.ID] = state

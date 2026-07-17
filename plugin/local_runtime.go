@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,14 @@ type CommandRunner struct {
 }
 
 func (r CommandRunner) Start(ctx context.Context, binaryPath, socketPath, configPath string) (Process, error) {
+	return r.start(ctx, binaryPath, socketPath, configPath, "")
+}
+
+func (r CommandRunner) StartWithState(ctx context.Context, binaryPath, socketPath, configPath, statePath string) (Process, error) {
+	return r.start(ctx, binaryPath, socketPath, configPath, statePath)
+}
+
+func (r CommandRunner) start(ctx context.Context, binaryPath, socketPath, configPath, statePath string) (Process, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -34,6 +43,9 @@ func (r CommandRunner) Start(ctx context.Context, binaryPath, socketPath, config
 	}
 	args := append([]string(nil), r.ExtraArgs...)
 	args = append(args, "--anixops-socket", socketPath, "--anixops-config", configPath)
+	if statePath != "" {
+		args = append(args, "--anixops-state", statePath)
+	}
 	// The operation context only bounds startup and health verification. The
 	// plugin process must outlive the operation that enabled it and is stopped
 	// explicitly by disable, update, rollback, or Supervisor.Close.
@@ -43,11 +55,35 @@ func (r CommandRunner) Start(ctx context.Context, binaryPath, socketPath, config
 	}
 	process := &commandProcess{command: command, done: make(chan struct{}), exited: make(chan error, 1)}
 	go func() {
-		process.exited <- command.Wait()
+		waitErr := command.Wait()
+		process.waitMu.Lock()
+		process.waitErr = waitErr
+		process.waitMu.Unlock()
+		process.exited <- waitErr
 		close(process.exited)
 		close(process.done)
 	}()
 	return process, nil
+}
+
+func (r CommandRunner) Cleanup(ctx context.Context, binaryPath, socketPath, configPath, statePath string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	args := append([]string(nil), r.ExtraArgs...)
+	args = append(args,
+		"--anixops-cleanup",
+		"--anixops-socket", socketPath,
+		"--anixops-config", configPath,
+	)
+	if statePath != "" {
+		args = append(args, "--anixops-state", statePath)
+	}
+	output, err := exec.CommandContext(ctx, binaryPath, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("run plugin cleanup: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 type commandProcess struct {
@@ -56,6 +92,9 @@ type commandProcess struct {
 	exited    chan error
 	signal    sync.Once
 	signalErr error
+	waitMu    sync.RWMutex
+	waitErr   error
+	forced    bool
 }
 
 func (p *commandProcess) PID() int {
@@ -84,8 +123,16 @@ func (p *commandProcess) Stop(ctx context.Context) error {
 	}
 	select {
 	case <-p.done:
-		return nil
+		return p.result()
 	case <-ctx.Done():
+		select {
+		case <-p.done:
+			return p.result()
+		default:
+		}
+		p.waitMu.Lock()
+		p.forced = true
+		p.waitMu.Unlock()
 		if err := p.command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 			return err
 		}
@@ -96,6 +143,15 @@ func (p *commandProcess) Stop(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+}
+
+func (p *commandProcess) result() error {
+	p.waitMu.RLock()
+	defer p.waitMu.RUnlock()
+	if p.forced {
+		return nil
+	}
+	return p.waitErr
 }
 
 type GRPCHealthChecker struct {

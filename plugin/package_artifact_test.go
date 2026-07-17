@@ -42,10 +42,12 @@ func TestSupervisorInstallsPlatformEntrypointFromSignedPackage(t *testing.T) {
 	storedPackage, err := os.ReadFile(filepath.Join(versionDir, pluginPackageName))
 	require.NoError(t, err)
 	require.Equal(t, artifact, storedPackage)
-	require.NoError(t, supervisor.verifyInstalledVersion("package-test", "1.0.0"))
+	_, err = supervisor.verifyInstalledVersion("package-test", "1.0.0")
+	require.NoError(t, err)
 
 	require.NoError(t, os.WriteFile(filepath.Join(versionDir, pluginBinaryName), []byte("tampered"), 0o750))
-	require.ErrorContains(t, supervisor.verifyInstalledVersion("package-test", "1.0.0"), "does not match the signed package entrypoint")
+	_, err = supervisor.verifyInstalledVersion("package-test", "1.0.0")
+	require.ErrorContains(t, err, "does not match the signed package entrypoint")
 }
 
 func TestSupervisorRejectsEntrypointChangeForSameArtifactAndVersion(t *testing.T) {
