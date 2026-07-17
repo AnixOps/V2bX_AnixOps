@@ -23,7 +23,7 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 
 ## v3 Alpha 范围
 
-`v3.0.0-alpha.1` 提供 Agent-first 的控制流基础，但不是“所有任务已经全部迁移”
+`v3.1.0-alpha.1` 提供 Agent-first 的控制流与签名插件运行基础，但不是“所有任务已经全部迁移”
 的稳定版。新控制流通过 `AgentControlEnabled` 显式启用，用于握手、能力上报、
 心跳、受限操作、ACK 和观察状态；现有 REST/UniProxy、旧版 gRPC 与 WebSocket
 链路仍作为数据面和回退路径。生产部署应先在少量节点验证 TLS、重连和操作幂等
@@ -32,9 +32,11 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 ## 官方插件运行时预览
 
 官方插件 Supervisor 仍需通过 `PluginSupervisorEnabled` 显式启用。当前已实现
-真实的 `nftables-forward` 与 `nat-egress` 独立进程；后者负责 nftables
-IPv4/IPv6 masquerade、fwmark 策略路由和绑定出口接口的带标记健康探测。业务
-流量由内核网络栈承载，不经过 Supervisor 进程。
+真实的 `nftables-forward`、`nat-egress` 与 `gost-mesh` 独立进程。Supervisor
+可从签名包物化并逐次复验辅助运行时；`gost-mesh` 固定使用 GOST v3.2.6，
+提供 QUIC/WSS 聚合隧道、强制双向 TLS、源地址策略路由、健康检查和崩溃清理。
+TUIC 不属于 v1，因为该固定 GOST 版本不实现 TUIC。业务流量由内核网络栈或
+GOST 子进程承载，不经过 Supervisor 控制进程。
 
 `nat-egress` 清单声明 `plugin.runtime-state` 和 `plugin.cleanup`。Supervisor
 为它保留稳定的私有 ownership journal，并在崩溃、禁用、配置变更、升级和关闭
@@ -50,9 +52,9 @@ sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
   bash plugin/nategress/namespace_acceptance.sh
 ```
 
-该能力仍是预览：生产启用必须使用正式签名 Release，并完成 mark producer、
-FORWARD 防火墙策略、分批 canary 和运维审批；`gost-mesh` WSS/TUIC/QUIC
-目前也只有包契约，尚无真实 Agent 插件运行时。
+这些能力仍是预览：生产启用必须使用正式签名 Release，并完成 mark producer、
+FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、分批 canary
+和运维审批。当前 `gost-mesh` 证据来自隔离 namespace，不等同于跨地域生产验证。
 完整生命周期契约见 [官方插件 Supervisor](docs/PLUGIN_SUPERVISOR.md)。
 
 ## 默认路径
@@ -73,7 +75,7 @@ FORWARD 防火墙策略、分批 canary 和运维审批；`gost-mesh` WSS/TUIC/Q
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v3.0.0-alpha.1
+export VERSION=v3.1.0-alpha.1
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh

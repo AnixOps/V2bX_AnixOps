@@ -18,7 +18,7 @@ const (
 )
 
 var (
-	version  = "v3.0.0-alpha.1" // release builds replace this through ldflags
+	version  = "v3.1.0-alpha.1" // release builds replace this through ldflags
 	codename = productName
 	intro    = "AnixOps multi-core node agent"
 )

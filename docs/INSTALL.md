@@ -12,7 +12,7 @@ all come from the same release.
 Run as root on Debian/Ubuntu, RHEL-compatible Linux, Alpine, or Arch:
 
 ```bash
-export VERSION=v3.0.0-alpha.1
+export VERSION=v3.1.0-alpha.1
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
