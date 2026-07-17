@@ -2,6 +2,7 @@ package nftablesforward
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -197,10 +198,12 @@ func TestRenderRollbackFromSnapshotRestoresExistingTable(t *testing.T) {
 }
 
 type recordingApplier struct {
-	mu        sync.Mutex
-	calls     []string
-	snapshots []string
-	exists    bool
+	mu          sync.Mutex
+	calls       []string
+	snapshots   []string
+	exists      bool
+	verifyErr   error
+	verifyCalls int
 }
 
 func (a *recordingApplier) Apply(ctx context.Context, nftBinary, ruleset string) error {
@@ -228,6 +231,28 @@ func (a *recordingApplier) Snapshot(ctx context.Context, nftBinary, family, tabl
 	return TableSnapshot{Exists: a.exists}, nil
 }
 
+func (a *recordingApplier) VerifyApplied(ctx context.Context, nftBinary string, config Config) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.verifyCalls++
+	return a.verifyErr
+}
+
+func (a *recordingApplier) SetVerifyError(err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.verifyErr = err
+}
+
+func (a *recordingApplier) VerifyCalls() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.verifyCalls
+}
+
 func (a *recordingApplier) Calls() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -238,6 +263,50 @@ func (a *recordingApplier) Snapshots() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]string(nil), a.snapshots...)
+}
+
+func TestRunApplyMarksHealthUnhealthyWhenKernelVerificationFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket plugin runtime")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
+	configPath := filepath.Join(dir, "config.json")
+	socketPath := filepath.Join(dir, "plugin.sock")
+	statePath := filepath.Join(dir, "ownership.json")
+	config := strings.Replace(validConfigJSON("verify-health"), `"rules"`, `"apply":true,"rollback_on_exit":true,"rules"`, 1)
+	require.NoError(t, os.WriteFile(configPath, []byte(config), 0o600))
+
+	applier := &recordingApplier{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- Run(ctx, Options{
+			SocketPath: socketPath, ConfigPath: configPath, StatePath: statePath,
+			Applier: applier, VerifyInterval: 10 * time.Millisecond,
+		})
+	}()
+	connection := waitForHealth(t, socketPath)
+	defer connection.Close()
+	require.GreaterOrEqual(t, applier.VerifyCalls(), 1)
+	applier.SetVerifyError(errors.New("kernel ruleset changed"))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		response, err := healthpb.NewHealthClient(connection).Check(context.Background(), &healthpb.HealthCheckRequest{Service: ID})
+		if err == nil && response.Status == healthpb.HealthCheckResponse_NOT_SERVING {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	response, err := healthpb.NewHealthClient(connection).Check(context.Background(), &healthpb.HealthCheckRequest{Service: ID})
+	require.NoError(t, err)
+	require.Equal(t, healthpb.HealthCheckResponse_NOT_SERVING, response.Status)
+
+	cancel()
+	require.NoError(t, <-result)
+	require.Len(t, applier.Calls(), 2)
 }
 
 func waitForHealth(t *testing.T, socketPath string) *grpc.ClientConn {

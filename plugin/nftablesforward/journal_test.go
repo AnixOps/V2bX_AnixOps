@@ -84,6 +84,10 @@ func (a *journalApplier) Snapshot(ctx context.Context, _, _, _ string) (TableSna
 	return a.snapshot, nil
 }
 
+func (a *journalApplier) VerifyApplied(ctx context.Context, _ string, _ Config) error {
+	return ctx.Err()
+}
+
 func TestOwnershipJournalRecoversAfterAgentRestart(t *testing.T) {
 	directory := t.TempDir()
 	_ = os.Chmod(directory, 0o700)

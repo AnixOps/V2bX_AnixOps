@@ -23,15 +23,16 @@ import (
 )
 
 const (
-	ID              = "nftables-forward"
-	Version         = "1.1.0"
-	DefaultFamily   = "inet"
-	DefaultTable    = "anixops_forward"
-	DefaultChain    = "prerouting"
-	maxConfigBytes  = 256 << 10
-	maxRules        = 1024
-	defaultPriority = -100
-	commandTimeout  = 30 * time.Second
+	ID                    = "nftables-forward"
+	Version               = "1.1.0"
+	DefaultFamily         = "inet"
+	DefaultTable          = "anixops_forward"
+	DefaultChain          = "prerouting"
+	maxConfigBytes        = 256 << 10
+	maxRules              = 1024
+	defaultPriority       = -100
+	commandTimeout        = 30 * time.Second
+	defaultVerifyInterval = 5 * time.Second
 )
 
 type Config struct {
@@ -79,10 +80,11 @@ type rawRule struct {
 }
 
 type Options struct {
-	SocketPath string
-	ConfigPath string
-	StatePath  string
-	Applier    Applier
+	SocketPath     string
+	ConfigPath     string
+	StatePath      string
+	Applier        Applier
+	VerifyInterval time.Duration
 }
 
 type Applier interface {
@@ -96,6 +98,10 @@ type TableSnapshot struct {
 
 type Snapshotter interface {
 	Snapshot(ctx context.Context, nftBinary, family, table string) (TableSnapshot, error)
+}
+
+type AppliedVerifier interface {
+	VerifyApplied(ctx context.Context, nftBinary string, config Config) error
 }
 
 type CommandApplier struct{}
@@ -144,6 +150,21 @@ func (CommandApplier) Snapshot(ctx context.Context, nftBinary, family, table str
 		ruleset += "\n"
 	}
 	return TableSnapshot{Exists: true, Ruleset: ruleset}, nil
+}
+
+func (CommandApplier) VerifyApplied(ctx context.Context, nftBinary string, config Config) error {
+	if strings.TrimSpace(nftBinary) == "" {
+		nftBinary = "nft"
+	}
+	command := exec.CommandContext(ctx, nftBinary, "-j", "list", "table", config.Family, config.Table)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("inspect nftables-forward desired state: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	if err := verifyNftDocument(output, config); err != nil {
+		return fmt.Errorf("verify nftables-forward desired state: %w", err)
+	}
+	return nil
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -443,6 +464,16 @@ func Run(ctx context.Context, options Options) (runErr error) {
 				runErr = errors.Join(runErr, state.rollbackWithTimeout())
 			}
 		}()
+		verifier, ok := applier.(AppliedVerifier)
+		if !ok {
+			return errors.New("nftables-forward applier must verify applied kernel state")
+		}
+		verifyCtx, verifyCancel := context.WithTimeout(ctx, commandTimeout)
+		err = verifier.VerifyApplied(verifyCtx, config.NftBinary, config)
+		verifyCancel()
+		if err != nil {
+			return err
+		}
 	} else {
 		cleanupCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 		err = cleanupOwnershipJournal(cleanupCtx, applier, statePath)
@@ -472,21 +503,48 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		serveResult <- server.Serve(listener)
 	}()
 
-	select {
-	case <-ctx.Done():
-		healthServer.Shutdown()
-		server.Stop()
-		err := <-serveResult
-		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			return fmt.Errorf("serve plugin health API: %w", err)
+	var verifyTicker *time.Ticker
+	var verifyC <-chan time.Time
+	if config.Apply {
+		interval := options.VerifyInterval
+		if interval <= 0 {
+			interval = defaultVerifyInterval
 		}
-		return nil
-	case err := <-serveResult:
-		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
-			return fmt.Errorf("serve plugin health API: %w", err)
-		}
-		return nil
+		verifyTicker = time.NewTicker(interval)
+		verifyC = verifyTicker.C
+		defer verifyTicker.Stop()
 	}
+
+selectLoop:
+	for {
+		select {
+		case <-ctx.Done():
+			healthServer.Shutdown()
+			server.Stop()
+			err := <-serveResult
+			if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				return fmt.Errorf("serve plugin health API: %w", err)
+			}
+			break selectLoop
+		case err := <-serveResult:
+			if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				return fmt.Errorf("serve plugin health API: %w", err)
+			}
+			break selectLoop
+		case <-verifyC:
+			verifier := applier.(AppliedVerifier)
+			verifyCtx, cancel := context.WithTimeout(ctx, commandTimeout)
+			verifyErr := verifier.VerifyApplied(verifyCtx, config.NftBinary, config)
+			cancel()
+			status := healthpb.HealthCheckResponse_SERVING
+			if verifyErr != nil {
+				status = healthpb.HealthCheckResponse_NOT_SERVING
+			}
+			healthServer.SetServingStatus("", status)
+			healthServer.SetServingStatus(ID, status)
+		}
+	}
+	return nil
 }
 
 func RenderRollback(config Config) (string, error) {

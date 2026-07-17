@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- `nftables-forward` now verifies the live kernel table immediately after an
+  apply and continuously while active. The plugin's Unix-socket health endpoint
+  changes to `NOT_SERVING` when the managed table, chain, rule identity, DNAT
+  destination, or counter-free rule shape drifts from the signed configuration.
+
+### Known Gaps
+
+- This local readiness signal is the first alpha.6 building block. Structured
+  ruleset fingerprints and per-rule counters still need transport to Control
+  before topology promotion can use live kernel observation as release proof.
+
 ## 4.0.0-alpha.5 - 2026-07-17
 
 ### Added
