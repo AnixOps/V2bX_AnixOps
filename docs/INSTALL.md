@@ -12,7 +12,7 @@ all come from the same release.
 Run as root on Debian/Ubuntu, RHEL-compatible Linux, Alpine, or Arch:
 
 ```bash
-export VERSION=v4.0.0-alpha.5
+export VERSION=v4.0.0-alpha.6
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -55,7 +55,7 @@ and keepalive settings. Never paste API keys into public logs or support tickets
 Install an exact stable or prerelease tag with the same command:
 
 ```bash
-sudo anix-agent update v4.0.0-alpha.5
+sudo anix-agent update v4.0.0-alpha.6
 sudo anix-agent status
 ```
 

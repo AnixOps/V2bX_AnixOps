@@ -37,6 +37,23 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || fail "required command not found: $1"
 }
 
+counter_observation_ready() {
+  "${PYTHON_BIN}" - "$1" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    observed = json.load(handle)
+if observed.get("health") != "healthy":
+    raise SystemExit(1)
+counters = {entry.get("rule_id"): entry for entry in observed.get("rule_counters", [])}
+for rule_id in ("tcp-namespace", "udp-namespace"):
+    counter = counters.get(rule_id)
+    if not isinstance(counter, dict) or counter.get("packets", 0) <= 0 or counter.get("bytes", 0) <= 0:
+        raise SystemExit(1)
+PY
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent-binary)
@@ -217,7 +234,16 @@ done
 RULESET="$(ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward 2>&1)" || fail "nftables table was not installed: ${RULESET}"
 grep -q "tcp-namespace" <<<"${RULESET}" || fail "TCP nftables rule was not installed: ${RULESET}"
 grep -q "udp-namespace" <<<"${RULESET}" || fail "UDP nftables rule was not installed: ${RULESET}"
+[[ "$(grep -c "counter packets" <<<"${RULESET}")" -eq 2 ]] || fail "per-rule nftables counters were not installed: ${RULESET}"
 timeout 10 ip netns exec "${CLIENT_NS}" "${PYTHON_BIN}" "${CLIENT_CHECK}"
+OBSERVATION="${STATE}.observed.json"
+for _ in {1..70}; do
+  if [[ -f "${OBSERVATION}" ]] && counter_observation_ready "${OBSERVATION}"; then
+    break
+  fi
+  sleep 0.1
+done
+counter_observation_ready "${OBSERVATION}" || fail "runtime observation did not report incremented TCP/UDP counters"
 
 kill -KILL "${PLUGIN_PID}"
 if wait "${PLUGIN_PID}"; then

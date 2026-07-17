@@ -34,6 +34,28 @@ message Heartbeat {
   int64 uptime_seconds = 2;
   uint64 observed_revision = 3;
   map<string, double> metrics = 4;
+  repeated PluginObservedState plugin_observations = 5;
+}
+
+// PluginObservedState is a bounded, non-secret runtime observation emitted by
+// an enabled Agent plugin. The kernel binds this to the operation version,
+// revision, and config hash before a topology can be promoted.
+message PluginObservedState {
+  string plugin_id = 1;
+  string version = 2;
+  uint64 desired_revision = 3;
+  uint64 observed_revision = 4;
+  string config_hash = 5;
+  string health = 6;
+  string ruleset_sha256 = 7;
+  int64 observed_at_unix_ms = 8;
+  repeated PluginRuleCounter rule_counters = 9;
+}
+
+message PluginRuleCounter {
+  string rule_id = 1;
+  uint64 packets = 2;
+  uint64 bytes = 3;
 }
 
 message HeartbeatAck {

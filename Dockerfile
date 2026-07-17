@@ -1,6 +1,6 @@
 # Build go
 FROM golang:1.25.0-alpine AS builder
-ARG VERSION=v4.0.0-alpha.5
+ARG VERSION=v4.0.0-alpha.6
 WORKDIR /app
 COPY . .
 ENV CGO_ENABLED=0

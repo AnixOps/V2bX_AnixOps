@@ -68,6 +68,12 @@ func newAgentControlClientForSupervisor(apiConfig *conf.ApiConfig, controller *C
 			}
 			return supervisor.TelemetryMetrics(ctx)
 		},
+		PluginObservationsProvider: func(ctx context.Context) ([]*agentv1pb.PluginObservedState, error) {
+			if supervisor == nil {
+				return nil, nil
+			}
+			return supervisor.PluginObservations(ctx)
+		},
 	})
 }
 
@@ -173,6 +179,7 @@ func agentCapabilities(core vCore.Core, pluginSupervisorEnabled bool) []*agentv1
 		})
 	}
 	if pluginSupervisorEnabled {
+		capabilities = append(capabilities, &agentv1pb.Capability{Name: "kernel.observed-state", Version: "v1"})
 		for _, operation := range []string{"plugin.install", "plugin.inspect", "plugin.configure", "plugin.enable", "plugin.disable", "plugin.update", "plugin.rollback", "plugin.health"} {
 			capabilities = append(capabilities, &agentv1pb.Capability{Name: operation, Version: "v1"})
 		}

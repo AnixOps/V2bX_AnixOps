@@ -84,8 +84,15 @@ func (a *journalApplier) Snapshot(ctx context.Context, _, _, _ string) (TableSna
 	return a.snapshot, nil
 }
 
-func (a *journalApplier) VerifyApplied(ctx context.Context, _ string, _ Config) error {
-	return ctx.Err()
+func (a *journalApplier) ObserveApplied(ctx context.Context, _ string, config Config) (NftablesObservation, error) {
+	if err := ctx.Err(); err != nil {
+		return NftablesObservation{}, err
+	}
+	counters := make([]NftablesRuleCounter, 0, len(config.Rules))
+	for _, rule := range config.Rules {
+		counters = append(counters, NftablesRuleCounter{RuleID: rule.ID})
+	}
+	return NftablesObservation{RulesetSHA256: strings.Repeat("c", 64), RuleCounters: counters}, nil
 }
 
 func TestOwnershipJournalRecoversAfterAgentRestart(t *testing.T) {

@@ -133,6 +133,9 @@ func (m Manifest) validateForRuntime(goos, goarch string) error {
 	if containsString(m.Capabilities, "plugin.cleanup") && !containsString(m.Capabilities, "plugin.runtime-state") {
 		return errors.New("plugin.cleanup capability requires plugin.runtime-state")
 	}
+	if containsString(m.Capabilities, observedStateCapability) && !containsString(m.Capabilities, "plugin.runtime-state") {
+		return fmt.Errorf("%s capability requires plugin.runtime-state", observedStateCapability)
+	}
 	if err := validateManifestPermissions(m.ID, m.Permissions); err != nil {
 		return err
 	}

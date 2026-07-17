@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const (
@@ -323,11 +324,20 @@ func Cleanup(ctx context.Context, options Options) error {
 	if err != nil {
 		return err
 	}
+	observationPath, err := observationFilePath(statePath)
+	if err != nil {
+		return err
+	}
 	applier := options.Applier
 	if applier == nil {
 		applier = CommandApplier{}
 	}
 	cleanupCtx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
-	return cleanupOwnershipJournal(cleanupCtx, applier, statePath)
+	cleanupErr := cleanupOwnershipJournal(cleanupCtx, applier, statePath)
+	observationErr := invalidateRuntimeObservation(observationPath, time.Now())
+	if observationErr != nil {
+		observationErr = fmt.Errorf("invalidate nftables-forward observation: %w", observationErr)
+	}
+	return errors.Join(cleanupErr, observationErr)
 }

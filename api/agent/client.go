@@ -37,6 +37,8 @@ const (
 	operationQueueSize      = 32
 	completedCacheSize      = 256
 	metricsProviderTimeout  = 2 * time.Second
+	maxPluginObservations   = 32
+	maxPluginRuleCounters   = 1024
 	operationCancelKind     = "operation.cancel"
 	operationCancelledText  = "operation cancelled"
 	operationNotRunningText = "operation cancelled/not running"
@@ -76,9 +78,12 @@ type Config struct {
 	// Agent Control heartbeat. A provider failure is logged and does not block
 	// the control stream or suppress the built-in metrics.
 	MetricsProvider func(context.Context) (map[string]float64, error)
-	DialContext     DialContextFunc
-	DialOptions     []grpc.DialOption
-	Rand            *mathrand.Rand
+	// PluginObservationsProvider contributes bounded, non-secret kernel state
+	// evidence. A provider failure must never suppress the heartbeat itself.
+	PluginObservationsProvider func(context.Context) ([]*agentv1pb.PluginObservedState, error)
+	DialContext                DialContextFunc
+	DialOptions                []grpc.DialOption
+	Rand                       *mathrand.Rand
 }
 
 type Client struct {
@@ -850,6 +855,16 @@ func (c *Client) sendHeartbeat(stream agentv1pb.AgentControlService_ControlStrea
 			log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID, "error": err}).Warn("metrics provider failed")
 		}
 	}
+	observations := make([]*agentv1pb.PluginObservedState, 0)
+	if c.config.PluginObservationsProvider != nil {
+		providerCtx, cancel := context.WithTimeout(c.ctx, metricsProviderTimeout)
+		provided, err := c.config.PluginObservationsProvider(providerCtx)
+		cancel()
+		observations = validPluginObservations(provided)
+		if err != nil {
+			log.WithFields(log.Fields{"component": "agent-control", "node_id": c.config.NodeID, "error": err}).Warn("plugin observations provider failed")
+		}
+	}
 	return c.send(stream, &agentv1pb.AgentToControl{
 		RequestId:    newID("heartbeat"),
 		NodeId:       uint32(c.config.NodeID),
@@ -857,13 +872,85 @@ func (c *Client) sendHeartbeat(stream agentv1pb.AgentControlService_ControlStrea
 		SentAtUnixMs: time.Now().UnixMilli(),
 		Payload: &agentv1pb.AgentToControl_Heartbeat{
 			Heartbeat: &agentv1pb.Heartbeat{
-				SessionId:        sessionID,
-				UptimeSeconds:    int64(time.Since(startedAt) / time.Second),
-				ObservedRevision: c.observedRevision.Load(),
-				Metrics:          metrics,
+				SessionId:          sessionID,
+				UptimeSeconds:      int64(time.Since(startedAt) / time.Second),
+				ObservedRevision:   c.observedRevision.Load(),
+				Metrics:            metrics,
+				PluginObservations: observations,
 			},
 		},
 	})
+}
+
+func validPluginObservations(source []*agentv1pb.PluginObservedState) []*agentv1pb.PluginObservedState {
+	if len(source) == 0 {
+		return nil
+	}
+	result := make([]*agentv1pb.PluginObservedState, 0, min(len(source), maxPluginObservations))
+	seen := make(map[string]struct{}, len(source))
+	for _, observation := range source {
+		if len(result) >= maxPluginObservations || observation == nil {
+			break
+		}
+		pluginID := strings.TrimSpace(observation.PluginId)
+		version := strings.TrimSpace(observation.Version)
+		if pluginID == "" || len(pluginID) > 120 || version == "" || len(version) > 64 ||
+			observation.DesiredRevision == 0 || observation.ObservedRevision == 0 ||
+			len(observation.ConfigHash) != 64 ||
+			(observation.Health != "healthy" && observation.Health != "unhealthy" && observation.Health != "disabled") ||
+			observation.ObservedAtUnixMs <= 0 {
+			continue
+		}
+		if _, err := hex.DecodeString(observation.ConfigHash); err != nil {
+			continue
+		}
+		rulesetSHA256 := observation.RulesetSha256
+		if observation.Health == "healthy" && len(rulesetSHA256) != 64 {
+			continue
+		}
+		if rulesetSHA256 != "" {
+			if len(rulesetSHA256) != 64 {
+				continue
+			}
+			if _, err := hex.DecodeString(rulesetSHA256); err != nil {
+				continue
+			}
+		}
+		if observation.Health != "healthy" && len(observation.RuleCounters) != 0 {
+			continue
+		}
+		key := pluginID + "\x00" + version
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		counters := make([]*agentv1pb.PluginRuleCounter, 0, min(len(observation.RuleCounters), maxPluginRuleCounters))
+		counterIDs := make(map[string]struct{}, len(observation.RuleCounters))
+		for _, counter := range observation.RuleCounters {
+			if len(counters) >= maxPluginRuleCounters || counter == nil {
+				break
+			}
+			id := strings.TrimSpace(counter.RuleId)
+			if id == "" || len(id) > 96 {
+				continue
+			}
+			if _, duplicate := counterIDs[id]; duplicate {
+				continue
+			}
+			counterIDs[id] = struct{}{}
+			counters = append(counters, &agentv1pb.PluginRuleCounter{RuleId: id, Packets: counter.Packets, Bytes: counter.Bytes})
+		}
+		if len(counters) != len(observation.RuleCounters) {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, &agentv1pb.PluginObservedState{
+			PluginId: pluginID, Version: version, DesiredRevision: observation.DesiredRevision,
+			ObservedRevision: observation.ObservedRevision, ConfigHash: strings.ToLower(observation.ConfigHash),
+			Health: observation.Health, RulesetSha256: strings.ToLower(rulesetSHA256),
+			ObservedAtUnixMs: observation.ObservedAtUnixMs, RuleCounters: counters,
+		})
+	}
+	return result
 }
 
 func (c *Client) sendOperationAck(stream agentv1pb.AgentControlService_ControlStreamClient, sessionID string, operation *agentv1pb.DesiredOperation, accepted bool, reason string) error {

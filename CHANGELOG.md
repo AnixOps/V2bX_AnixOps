@@ -2,18 +2,34 @@
 
 ## Unreleased
 
+## 4.0.0-alpha.6 - 2026-07-18
+
 ### Added
 
-- `nftables-forward` now verifies the live kernel table immediately after an
-  apply and continuously while active. The plugin's Unix-socket health endpoint
-  changes to `NOT_SERVING` when the managed table, chain, rule identity, DNAT
-  destination, or counter-free rule shape drifts from the signed configuration.
+- Added `nftables-forward` 1.2.0 live-kernel evidence. Every signed DNAT rule
+  receives an nftables counter; semantic `nft -j` verification publishes a
+  stable ruleset SHA-256 that excludes mutable counters and handles, plus
+  per-rule packet/byte totals.
+- Added an atomic private `StatePath + .observed.json` contract. It contains
+  only fixed identity, health, timestamp, fingerprint, and counter fields;
+  drift, cleanup, and process exit invalidate it to `unhealthy`.
+- Added Supervisor collection of observation files from enabled official
+  packages that explicitly declare `kernel.observed-state`. Every heartbeat
+  checks the runtime Unix health socket before accepting a file; a non-serving
+  runtime sends bounded `unhealthy` evidence rather than reusing a prior
+  fingerprint. The Supervisor supplies the authoritative plugin version,
+  config hash, and revisions.
+
+### Fixed
+
+- The heartbeat validator now retains a bounded unhealthy observation without
+  a ruleset fingerprint, while refusing non-healthy observations with counters.
 
 ### Known Gaps
 
-- This local readiness signal is the first alpha.6 building block. Structured
-  ruleset fingerprints and per-rule counters still need transport to Control
-  before topology promotion can use live kernel observation as release proof.
+- This runtime remains opt-in and canary-only. Stable promotion still depends
+  on Control-side staging restore/fallback evidence and the required 72-hour
+  canary; it does not authorize production traffic takeover by itself.
 
 ## 4.0.0-alpha.5 - 2026-07-17
 

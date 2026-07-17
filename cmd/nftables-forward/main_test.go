@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const officialManifestVersion = "1.1.0"
+const officialManifestVersion = "1.2.0"
 
 func TestVersionMatchesOfficialManifest(t *testing.T) {
 	require.Equal(t, officialManifestVersion, nftablesforward.Version)

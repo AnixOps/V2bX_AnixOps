@@ -9,6 +9,7 @@ import (
 	mathrand "math/rand"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -916,4 +917,36 @@ func TestSendHeartbeatKeepsPartialMetricsWhenProviderReportsError(t *testing.T) 
 	heartbeat := messages[0].GetHeartbeat()
 	require.NotNil(t, heartbeat)
 	assert.Equal(t, 7.25, heartbeat.Metrics["plugin.machine-telemetry.cpu_usage_percent"])
+}
+
+func TestSendHeartbeatKeepsUnhealthyPluginObservationWithoutLiveFingerprint(t *testing.T) {
+	configHash := strings.Repeat("a", 64)
+	client, err := NewClient(Config{
+		Target: "unused:1", NodeID: 1, APIKey: "key", AgentVersion: "test-agent",
+		PluginObservationsProvider: func(context.Context) ([]*agentv1pb.PluginObservedState, error) {
+			return []*agentv1pb.PluginObservedState{
+				{
+					PluginId: "nftables-forward", Version: "1.2.0", DesiredRevision: 8, ObservedRevision: 8,
+					ConfigHash: configHash, Health: "unhealthy", ObservedAtUnixMs: time.Now().UnixMilli(),
+				},
+				{
+					PluginId: "missing-fingerprint", Version: "1.0.0", DesiredRevision: 1, ObservedRevision: 1,
+					ConfigHash: configHash, Health: "healthy", ObservedAtUnixMs: time.Now().UnixMilli(),
+				},
+			}, nil
+		},
+	})
+	require.NoError(t, err)
+	stream := &recordingAgentClientStream{}
+	require.NoError(t, client.sendHeartbeat(stream, "plugin-observation-session", time.Now()))
+
+	messages := stream.messages()
+	require.Len(t, messages, 1)
+	observations := messages[0].GetHeartbeat().GetPluginObservations()
+	require.Len(t, observations, 1)
+	assert.Equal(t, "nftables-forward", observations[0].PluginId)
+	assert.Equal(t, "unhealthy", observations[0].Health)
+	assert.Empty(t, observations[0].RulesetSha256)
+	assert.Empty(t, observations[0].RuleCounters)
+	assert.Equal(t, configHash, observations[0].ConfigHash)
 }

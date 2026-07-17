@@ -154,7 +154,7 @@ old version; the old version is started only after target cleanup succeeds.
 This intentionally prefers no stale nftables or policy-routing ownership over
 automatic availability.
 
-The `nftables-forward` 1.1.0, `nat-egress`, and `gost-mesh` runtimes use this
+The `nftables-forward` 1.2.0, `nat-egress`, and `gost-mesh` runtimes use this
 contract for private crash-safe ownership journals. `nftables-forward` writes
 the original table snapshot before applying rules, restores an interrupted
 journal before a new start, and exposes signed cleanup and config-validation

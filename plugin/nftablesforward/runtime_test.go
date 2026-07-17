@@ -96,8 +96,8 @@ func TestRenderRulesetCoversTCPUDPAndFamilies(t *testing.T) {
 	require.Contains(t, ruleset, "add table inet anixops_forward")
 	require.Contains(t, ruleset, "flush table inet anixops_forward")
 	require.Contains(t, ruleset, "add chain inet anixops_forward prerouting { type nat hook prerouting priority -90; policy accept; }")
-	require.Contains(t, ruleset, `add rule inet anixops_forward prerouting ip daddr 198.51.100.10 tcp dport 443 dnat to 203.0.113.10:8443 comment "anixops tcp-443 dedicated"`)
-	require.Contains(t, ruleset, `add rule inet anixops_forward prerouting ip6 daddr 2001:db8::10 udp dport 443 dnat to [2001:db8::20]:8443 comment "anixops udp-443"`)
+	require.Contains(t, ruleset, `add rule inet anixops_forward prerouting ip daddr 198.51.100.10 tcp dport 443 counter dnat to 203.0.113.10:8443 comment "anixops tcp-443 dedicated"`)
+	require.Contains(t, ruleset, `add rule inet anixops_forward prerouting ip6 daddr 2001:db8::10 udp dport 443 counter dnat to [2001:db8::20]:8443 comment "anixops udp-443"`)
 
 	config.Family = "ip"
 	_, err = RenderRuleset(config)
@@ -204,6 +204,7 @@ type recordingApplier struct {
 	exists      bool
 	verifyErr   error
 	verifyCalls int
+	observation NftablesObservation
 }
 
 func (a *recordingApplier) Apply(ctx context.Context, nftBinary, ruleset string) error {
@@ -231,14 +232,24 @@ func (a *recordingApplier) Snapshot(ctx context.Context, nftBinary, family, tabl
 	return TableSnapshot{Exists: a.exists}, nil
 }
 
-func (a *recordingApplier) VerifyApplied(ctx context.Context, nftBinary string, config Config) error {
+func (a *recordingApplier) ObserveApplied(ctx context.Context, nftBinary string, config Config) (NftablesObservation, error) {
 	if err := ctx.Err(); err != nil {
-		return err
+		return NftablesObservation{}, err
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.verifyCalls++
-	return a.verifyErr
+	if a.verifyErr != nil {
+		return NftablesObservation{}, a.verifyErr
+	}
+	if a.observation.RulesetSHA256 != "" {
+		return a.observation, nil
+	}
+	counters := make([]NftablesRuleCounter, 0, len(config.Rules))
+	for _, rule := range config.Rules {
+		counters = append(counters, NftablesRuleCounter{RuleID: rule.ID})
+	}
+	return NftablesObservation{RulesetSHA256: strings.Repeat("a", 64), RuleCounters: counters}, nil
 }
 
 func (a *recordingApplier) SetVerifyError(err error) {
@@ -303,10 +314,71 @@ func TestRunApplyMarksHealthUnhealthyWhenKernelVerificationFails(t *testing.T) {
 	response, err := healthpb.NewHealthClient(connection).Check(context.Background(), &healthpb.HealthCheckRequest{Service: ID})
 	require.NoError(t, err)
 	require.Equal(t, healthpb.HealthCheckResponse_NOT_SERVING, response.Status)
+	observationPath, err := observationFilePath(statePath)
+	require.NoError(t, err)
+	observation := waitForRuntimeObservation(t, observationPath, observationUnhealthy)
+	require.Empty(t, observation.RulesetSHA256)
+	require.Empty(t, observation.RuleCounters)
 
 	cancel()
 	require.NoError(t, <-result)
 	require.Len(t, applier.Calls(), 2)
+}
+
+func TestRunApplyPersistsHealthyObservationAndInvalidatesOnExit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix socket plugin runtime")
+	}
+	dir := t.TempDir()
+	require.NoError(t, os.Chmod(dir, 0o700))
+	configPath := filepath.Join(dir, "config.json")
+	socketPath := filepath.Join(dir, "plugin.sock")
+	statePath := filepath.Join(dir, "ownership.json")
+	config := strings.Replace(validConfigJSON("observed-rule"), `"rules"`, `"apply":true,"rollback_on_exit":true,"rules"`, 1)
+	require.NoError(t, os.WriteFile(configPath, []byte(config), 0o600))
+
+	applier := &recordingApplier{observation: NftablesObservation{
+		RulesetSHA256: strings.Repeat("b", 64),
+		RuleCounters:  []NftablesRuleCounter{{RuleID: "observed-rule", Packets: 7, Bytes: 900}},
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		result <- Run(ctx, Options{SocketPath: socketPath, ConfigPath: configPath, StatePath: statePath, Applier: applier})
+	}()
+	connection := waitForHealth(t, socketPath)
+	defer connection.Close()
+
+	observationPath, err := observationFilePath(statePath)
+	require.NoError(t, err)
+	observation := waitForRuntimeObservation(t, observationPath, observationHealthy)
+	require.Equal(t, strings.Repeat("b", 64), observation.RulesetSHA256)
+	require.Equal(t, []runtimeRuleCounter{{RuleID: "observed-rule", Packets: 7, Bytes: 900}}, observation.RuleCounters)
+	info, err := os.Stat(observationPath)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+
+	cancel()
+	require.NoError(t, <-result)
+	observation = waitForRuntimeObservation(t, observationPath, observationUnhealthy)
+	require.Empty(t, observation.RulesetSHA256)
+	require.Empty(t, observation.RuleCounters)
+}
+
+func waitForRuntimeObservation(t *testing.T, path, health string) runtimeObservation {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		observation, err := loadRuntimeObservation(path)
+		if err == nil && observation.Health == health {
+			return observation
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	observation, err := loadRuntimeObservation(path)
+	require.NoError(t, err)
+	require.Equal(t, health, observation.Health)
+	return observation
 }
 
 func waitForHealth(t *testing.T, socketPath string) *grpc.ClientConn {

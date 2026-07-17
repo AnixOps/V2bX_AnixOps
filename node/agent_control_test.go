@@ -135,4 +135,7 @@ func TestAgentCapabilitiesAdvertisePluginOperationsOnlyWhenEnabled(t *testing.T)
 			t.Fatalf("plugin-enabled Agent did not advertise %s", name)
 		}
 	}
+	if !contains(current, "kernel.observed-state") {
+		t.Fatal("plugin-enabled Agent did not advertise kernel.observed-state")
+	}
 }

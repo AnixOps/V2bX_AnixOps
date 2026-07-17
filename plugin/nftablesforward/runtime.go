@@ -24,7 +24,7 @@ import (
 
 const (
 	ID                    = "nftables-forward"
-	Version               = "1.1.0"
+	Version               = "1.2.0"
 	DefaultFamily         = "inet"
 	DefaultTable          = "anixops_forward"
 	DefaultChain          = "prerouting"
@@ -101,7 +101,10 @@ type Snapshotter interface {
 }
 
 type AppliedVerifier interface {
-	VerifyApplied(ctx context.Context, nftBinary string, config Config) error
+	// ObserveApplied must prove that the live kernel state is semantically
+	// identical to config and return only counter-safe observation data. Runtime
+	// health is not considered serving until this evidence has been persisted.
+	ObserveApplied(ctx context.Context, nftBinary string, config Config) (NftablesObservation, error)
 }
 
 type CommandApplier struct{}
@@ -152,19 +155,29 @@ func (CommandApplier) Snapshot(ctx context.Context, nftBinary, family, table str
 	return TableSnapshot{Exists: true, Ruleset: ruleset}, nil
 }
 
-func (CommandApplier) VerifyApplied(ctx context.Context, nftBinary string, config Config) error {
+func (CommandApplier) ObserveApplied(ctx context.Context, nftBinary string, config Config) (NftablesObservation, error) {
 	if strings.TrimSpace(nftBinary) == "" {
 		nftBinary = "nft"
 	}
 	command := exec.CommandContext(ctx, nftBinary, "-j", "list", "table", config.Family, config.Table)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("inspect nftables-forward desired state: %w: %s", err, strings.TrimSpace(string(output)))
+		return NftablesObservation{}, fmt.Errorf("inspect nftables-forward desired state: %w: %s", err, strings.TrimSpace(string(output)))
 	}
-	if err := verifyNftDocument(output, config); err != nil {
-		return fmt.Errorf("verify nftables-forward desired state: %w", err)
+	observation, err := observeNftDocument(output, config)
+	if err != nil {
+		return NftablesObservation{}, fmt.Errorf("verify nftables-forward desired state: %w", err)
 	}
-	return nil
+	return observation, nil
+
+}
+
+// VerifyApplied preserves the direct verification helper for callers that only
+// need a pass/fail result. The runtime itself always consumes the structured
+// observation returned by ObserveApplied.
+func (applier CommandApplier) VerifyApplied(ctx context.Context, nftBinary string, config Config) error {
+	_, err := applier.ObserveApplied(ctx, nftBinary, config)
+	return err
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -395,7 +408,7 @@ func RenderRuleset(config Config) (string, error) {
 		if err := validateRuleForFamily(config.Family, rule); err != nil {
 			return "", fmt.Errorf("rule %q: %w", rule.ID, err)
 		}
-		fmt.Fprintf(&builder, "add rule %s %s %s %s daddr %s %s dport %d dnat to %s comment %q\n",
+		fmt.Fprintf(&builder, "add rule %s %s %s %s daddr %s %s dport %d counter dnat to %s comment %q\n",
 			config.Family,
 			config.Table,
 			config.Chain,
@@ -449,6 +462,15 @@ func Run(ctx context.Context, options Options) (runErr error) {
 	if err != nil {
 		return err
 	}
+	observationPath, err := observationFilePath(statePath)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err := invalidateRuntimeObservation(observationPath, time.Now()); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("invalidate nftables-forward observation: %w", err))
+		}
+	}()
 	if config.Apply {
 		if runtime.GOOS != "linux" {
 			return errors.New("nftables-forward apply is supported only on Linux")
@@ -466,13 +488,16 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		}()
 		verifier, ok := applier.(AppliedVerifier)
 		if !ok {
-			return errors.New("nftables-forward applier must verify applied kernel state")
+			return errors.New("nftables-forward applier must observe applied kernel state")
 		}
 		verifyCtx, verifyCancel := context.WithTimeout(ctx, commandTimeout)
-		err = verifier.VerifyApplied(verifyCtx, config.NftBinary, config)
+		observation, observeErr := verifier.ObserveApplied(verifyCtx, config.NftBinary, config)
 		verifyCancel()
-		if err != nil {
-			return err
+		if observeErr != nil {
+			return observeErr
+		}
+		if err := writeHealthyObservation(observationPath, config, observation, time.Now()); err != nil {
+			return fmt.Errorf("persist nftables-forward observation: %w", err)
 		}
 	} else {
 		cleanupCtx, cancel := context.WithTimeout(ctx, commandTimeout)
@@ -480,6 +505,9 @@ func Run(ctx context.Context, options Options) (runErr error) {
 		cancel()
 		if err != nil {
 			return fmt.Errorf("recover interrupted nftables-forward state before observation mode: %w", err)
+		}
+		if err := invalidateRuntimeObservation(observationPath, time.Now()); err != nil {
+			return fmt.Errorf("persist nftables-forward observation: %w", err)
 		}
 	}
 
@@ -534,11 +562,15 @@ selectLoop:
 		case <-verifyC:
 			verifier := applier.(AppliedVerifier)
 			verifyCtx, cancel := context.WithTimeout(ctx, commandTimeout)
-			verifyErr := verifier.VerifyApplied(verifyCtx, config.NftBinary, config)
+			observation, verifyErr := verifier.ObserveApplied(verifyCtx, config.NftBinary, config)
 			cancel()
 			status := healthpb.HealthCheckResponse_SERVING
 			if verifyErr != nil {
 				status = healthpb.HealthCheckResponse_NOT_SERVING
+				_ = invalidateRuntimeObservation(observationPath, time.Now())
+			} else if err := writeHealthyObservation(observationPath, config, observation, time.Now()); err != nil {
+				status = healthpb.HealthCheckResponse_NOT_SERVING
+				_ = invalidateRuntimeObservation(observationPath, time.Now())
 			}
 			healthServer.SetServingStatus("", status)
 			healthServer.SetServingStatus(ID, status)

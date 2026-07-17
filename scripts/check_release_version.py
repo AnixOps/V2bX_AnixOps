@@ -52,14 +52,14 @@ def write_fixture(root: Path, version: str) -> None:
 
 
 def self_test() -> None:
-    version = "4.0.0-alpha.5"
+    version = "4.0.0-alpha.6"
     with tempfile.TemporaryDirectory(prefix="anix-agent-release-version-") as temporary:
         root = Path(temporary)
         write_fixture(root, version)
         assert check_release_version(root, f"v{version}") == version
 
         dockerfile = root / "Dockerfile"
-        dockerfile.write_text("ARG VERSION=v4.0.0-alpha.6\n", encoding="utf-8")
+        dockerfile.write_text("ARG VERSION=v4.0.0-alpha.7\n", encoding="utf-8")
         try:
             check_release_version(root, f"v{version}")
         except ValueError as error:

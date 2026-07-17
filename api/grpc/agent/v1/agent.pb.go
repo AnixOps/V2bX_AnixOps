@@ -284,13 +284,14 @@ func (x *HelloAck) GetDesiredRevision() uint64 {
 }
 
 type Heartbeat struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	UptimeSeconds    int64                  `protobuf:"varint,2,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
-	ObservedRevision uint64                 `protobuf:"varint,3,opt,name=observed_revision,json=observedRevision,proto3" json:"observed_revision,omitempty"`
-	Metrics          map[string]float64     `protobuf:"bytes,4,rep,name=metrics,proto3" json:"metrics,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"fixed64,2,opt,name=value"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	SessionId          string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	UptimeSeconds      int64                  `protobuf:"varint,2,opt,name=uptime_seconds,json=uptimeSeconds,proto3" json:"uptime_seconds,omitempty"`
+	ObservedRevision   uint64                 `protobuf:"varint,3,opt,name=observed_revision,json=observedRevision,proto3" json:"observed_revision,omitempty"`
+	Metrics            map[string]float64     `protobuf:"bytes,4,rep,name=metrics,proto3" json:"metrics,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"fixed64,2,opt,name=value"`
+	PluginObservations []*PluginObservedState `protobuf:"bytes,5,rep,name=plugin_observations,json=pluginObservations,proto3" json:"plugin_observations,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -351,6 +352,184 @@ func (x *Heartbeat) GetMetrics() map[string]float64 {
 	return nil
 }
 
+func (x *Heartbeat) GetPluginObservations() []*PluginObservedState {
+	if x != nil {
+		return x.PluginObservations
+	}
+	return nil
+}
+
+// PluginObservedState is a bounded, non-secret runtime observation emitted by
+// an enabled Agent plugin. The kernel binds this to the operation version,
+// revision, and config hash before a topology can be promoted.
+type PluginObservedState struct {
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	PluginId         string                 `protobuf:"bytes,1,opt,name=plugin_id,json=pluginId,proto3" json:"plugin_id,omitempty"`
+	Version          string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"`
+	DesiredRevision  uint64                 `protobuf:"varint,3,opt,name=desired_revision,json=desiredRevision,proto3" json:"desired_revision,omitempty"`
+	ObservedRevision uint64                 `protobuf:"varint,4,opt,name=observed_revision,json=observedRevision,proto3" json:"observed_revision,omitempty"`
+	ConfigHash       string                 `protobuf:"bytes,5,opt,name=config_hash,json=configHash,proto3" json:"config_hash,omitempty"`
+	Health           string                 `protobuf:"bytes,6,opt,name=health,proto3" json:"health,omitempty"`
+	RulesetSha256    string                 `protobuf:"bytes,7,opt,name=ruleset_sha256,json=rulesetSha256,proto3" json:"ruleset_sha256,omitempty"`
+	ObservedAtUnixMs int64                  `protobuf:"varint,8,opt,name=observed_at_unix_ms,json=observedAtUnixMs,proto3" json:"observed_at_unix_ms,omitempty"`
+	RuleCounters     []*PluginRuleCounter   `protobuf:"bytes,9,rep,name=rule_counters,json=ruleCounters,proto3" json:"rule_counters,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *PluginObservedState) Reset() {
+	*x = PluginObservedState{}
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PluginObservedState) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PluginObservedState) ProtoMessage() {}
+
+func (x *PluginObservedState) ProtoReflect() protoreflect.Message {
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PluginObservedState.ProtoReflect.Descriptor instead.
+func (*PluginObservedState) Descriptor() ([]byte, []int) {
+	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *PluginObservedState) GetPluginId() string {
+	if x != nil {
+		return x.PluginId
+	}
+	return ""
+}
+
+func (x *PluginObservedState) GetVersion() string {
+	if x != nil {
+		return x.Version
+	}
+	return ""
+}
+
+func (x *PluginObservedState) GetDesiredRevision() uint64 {
+	if x != nil {
+		return x.DesiredRevision
+	}
+	return 0
+}
+
+func (x *PluginObservedState) GetObservedRevision() uint64 {
+	if x != nil {
+		return x.ObservedRevision
+	}
+	return 0
+}
+
+func (x *PluginObservedState) GetConfigHash() string {
+	if x != nil {
+		return x.ConfigHash
+	}
+	return ""
+}
+
+func (x *PluginObservedState) GetHealth() string {
+	if x != nil {
+		return x.Health
+	}
+	return ""
+}
+
+func (x *PluginObservedState) GetRulesetSha256() string {
+	if x != nil {
+		return x.RulesetSha256
+	}
+	return ""
+}
+
+func (x *PluginObservedState) GetObservedAtUnixMs() int64 {
+	if x != nil {
+		return x.ObservedAtUnixMs
+	}
+	return 0
+}
+
+func (x *PluginObservedState) GetRuleCounters() []*PluginRuleCounter {
+	if x != nil {
+		return x.RuleCounters
+	}
+	return nil
+}
+
+type PluginRuleCounter struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RuleId        string                 `protobuf:"bytes,1,opt,name=rule_id,json=ruleId,proto3" json:"rule_id,omitempty"`
+	Packets       uint64                 `protobuf:"varint,2,opt,name=packets,proto3" json:"packets,omitempty"`
+	Bytes         uint64                 `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PluginRuleCounter) Reset() {
+	*x = PluginRuleCounter{}
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PluginRuleCounter) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PluginRuleCounter) ProtoMessage() {}
+
+func (x *PluginRuleCounter) ProtoReflect() protoreflect.Message {
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PluginRuleCounter.ProtoReflect.Descriptor instead.
+func (*PluginRuleCounter) Descriptor() ([]byte, []int) {
+	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *PluginRuleCounter) GetRuleId() string {
+	if x != nil {
+		return x.RuleId
+	}
+	return ""
+}
+
+func (x *PluginRuleCounter) GetPackets() uint64 {
+	if x != nil {
+		return x.Packets
+	}
+	return 0
+}
+
+func (x *PluginRuleCounter) GetBytes() uint64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
 type HeartbeatAck struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	SessionId        string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
@@ -362,7 +541,7 @@ type HeartbeatAck struct {
 
 func (x *HeartbeatAck) Reset() {
 	*x = HeartbeatAck{}
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[4]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -374,7 +553,7 @@ func (x *HeartbeatAck) String() string {
 func (*HeartbeatAck) ProtoMessage() {}
 
 func (x *HeartbeatAck) ProtoReflect() protoreflect.Message {
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[4]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -387,7 +566,7 @@ func (x *HeartbeatAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatAck.ProtoReflect.Descriptor instead.
 func (*HeartbeatAck) Descriptor() ([]byte, []int) {
-	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{4}
+	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *HeartbeatAck) GetSessionId() string {
@@ -424,7 +603,7 @@ type DesiredOperation struct {
 
 func (x *DesiredOperation) Reset() {
 	*x = DesiredOperation{}
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -436,7 +615,7 @@ func (x *DesiredOperation) String() string {
 func (*DesiredOperation) ProtoMessage() {}
 
 func (x *DesiredOperation) ProtoReflect() protoreflect.Message {
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[5]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -449,7 +628,7 @@ func (x *DesiredOperation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DesiredOperation.ProtoReflect.Descriptor instead.
 func (*DesiredOperation) Descriptor() ([]byte, []int) {
-	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{5}
+	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *DesiredOperation) GetOperationId() string {
@@ -501,7 +680,7 @@ type OperationAck struct {
 
 func (x *OperationAck) Reset() {
 	*x = OperationAck{}
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -513,7 +692,7 @@ func (x *OperationAck) String() string {
 func (*OperationAck) ProtoMessage() {}
 
 func (x *OperationAck) ProtoReflect() protoreflect.Message {
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[6]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -526,7 +705,7 @@ func (x *OperationAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationAck.ProtoReflect.Descriptor instead.
 func (*OperationAck) Descriptor() ([]byte, []int) {
-	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{6}
+	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *OperationAck) GetOperationId() string {
@@ -586,7 +765,7 @@ type ObservedState struct {
 
 func (x *ObservedState) Reset() {
 	*x = ObservedState{}
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -598,7 +777,7 @@ func (x *ObservedState) String() string {
 func (*ObservedState) ProtoMessage() {}
 
 func (x *ObservedState) ProtoReflect() protoreflect.Message {
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[7]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -611,7 +790,7 @@ func (x *ObservedState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ObservedState.ProtoReflect.Descriptor instead.
 func (*ObservedState) Descriptor() ([]byte, []int) {
-	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{7}
+	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ObservedState) GetOperationId() string {
@@ -682,7 +861,7 @@ type AgentToControl struct {
 
 func (x *AgentToControl) Reset() {
 	*x = AgentToControl{}
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -694,7 +873,7 @@ func (x *AgentToControl) String() string {
 func (*AgentToControl) ProtoMessage() {}
 
 func (x *AgentToControl) ProtoReflect() protoreflect.Message {
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[8]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -707,7 +886,7 @@ func (x *AgentToControl) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AgentToControl.ProtoReflect.Descriptor instead.
 func (*AgentToControl) Descriptor() ([]byte, []int) {
-	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{8}
+	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *AgentToControl) GetRequestId() string {
@@ -827,7 +1006,7 @@ type ControlToAgent struct {
 
 func (x *ControlToAgent) Reset() {
 	*x = ControlToAgent{}
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -839,7 +1018,7 @@ func (x *ControlToAgent) String() string {
 func (*ControlToAgent) ProtoMessage() {}
 
 func (x *ControlToAgent) ProtoReflect() protoreflect.Message {
-	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[9]
+	mi := &file_api_grpc_agent_v1_agent_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -852,7 +1031,7 @@ func (x *ControlToAgent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ControlToAgent.ProtoReflect.Descriptor instead.
 func (*ControlToAgent) Descriptor() ([]byte, []int) {
-	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{9}
+	return file_api_grpc_agent_v1_agent_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ControlToAgent) GetRequestId() string {
@@ -969,16 +1148,32 @@ const file_api_grpc_agent_v1_agent_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12-\n" +
 	"\x13server_time_unix_ms\x18\x02 \x01(\x03R\x10serverTimeUnixMs\x12<\n" +
 	"\x1aheartbeat_interval_seconds\x18\x03 \x01(\rR\x18heartbeatIntervalSeconds\x12)\n" +
-	"\x10desired_revision\x18\x04 \x01(\x04R\x0fdesiredRevision\"\xfb\x01\n" +
+	"\x10desired_revision\x18\x04 \x01(\x04R\x0fdesiredRevision\"\xd0\x02\n" +
 	"\tHeartbeat\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12%\n" +
 	"\x0euptime_seconds\x18\x02 \x01(\x03R\ruptimeSeconds\x12+\n" +
 	"\x11observed_revision\x18\x03 \x01(\x04R\x10observedRevision\x12?\n" +
-	"\ametrics\x18\x04 \x03(\v2%.anix.agent.v1.Heartbeat.MetricsEntryR\ametrics\x1a:\n" +
+	"\ametrics\x18\x04 \x03(\v2%.anix.agent.v1.Heartbeat.MetricsEntryR\ametrics\x12S\n" +
+	"\x13plugin_observations\x18\x05 \x03(\v2\".anix.agent.v1.PluginObservedStateR\x12pluginObservations\x1a:\n" +
 	"\fMetricsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\x87\x01\n" +
+	"\x05value\x18\x02 \x01(\x01R\x05value:\x028\x01\"\xfa\x02\n" +
+	"\x13PluginObservedState\x12\x1b\n" +
+	"\tplugin_id\x18\x01 \x01(\tR\bpluginId\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\tR\aversion\x12)\n" +
+	"\x10desired_revision\x18\x03 \x01(\x04R\x0fdesiredRevision\x12+\n" +
+	"\x11observed_revision\x18\x04 \x01(\x04R\x10observedRevision\x12\x1f\n" +
+	"\vconfig_hash\x18\x05 \x01(\tR\n" +
+	"configHash\x12\x16\n" +
+	"\x06health\x18\x06 \x01(\tR\x06health\x12%\n" +
+	"\x0eruleset_sha256\x18\a \x01(\tR\rrulesetSha256\x12-\n" +
+	"\x13observed_at_unix_ms\x18\b \x01(\x03R\x10observedAtUnixMs\x12E\n" +
+	"\rrule_counters\x18\t \x03(\v2 .anix.agent.v1.PluginRuleCounterR\fruleCounters\"\\\n" +
+	"\x11PluginRuleCounter\x12\x17\n" +
+	"\arule_id\x18\x01 \x01(\tR\x06ruleId\x12\x18\n" +
+	"\apackets\x18\x02 \x01(\x04R\apackets\x12\x14\n" +
+	"\x05bytes\x18\x03 \x01(\x04R\x05bytes\"\x87\x01\n" +
 	"\fHeartbeatAck\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12-\n" +
@@ -1054,43 +1249,47 @@ func file_api_grpc_agent_v1_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_api_grpc_agent_v1_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_api_grpc_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_api_grpc_agent_v1_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_api_grpc_agent_v1_agent_proto_goTypes = []any{
-	(ObservedPhase)(0),       // 0: anix.agent.v1.ObservedPhase
-	(*Capability)(nil),       // 1: anix.agent.v1.Capability
-	(*Hello)(nil),            // 2: anix.agent.v1.Hello
-	(*HelloAck)(nil),         // 3: anix.agent.v1.HelloAck
-	(*Heartbeat)(nil),        // 4: anix.agent.v1.Heartbeat
-	(*HeartbeatAck)(nil),     // 5: anix.agent.v1.HeartbeatAck
-	(*DesiredOperation)(nil), // 6: anix.agent.v1.DesiredOperation
-	(*OperationAck)(nil),     // 7: anix.agent.v1.OperationAck
-	(*ObservedState)(nil),    // 8: anix.agent.v1.ObservedState
-	(*AgentToControl)(nil),   // 9: anix.agent.v1.AgentToControl
-	(*ControlToAgent)(nil),   // 10: anix.agent.v1.ControlToAgent
-	nil,                      // 11: anix.agent.v1.Capability.AttributesEntry
-	nil,                      // 12: anix.agent.v1.Hello.LabelsEntry
-	nil,                      // 13: anix.agent.v1.Heartbeat.MetricsEntry
+	(ObservedPhase)(0),          // 0: anix.agent.v1.ObservedPhase
+	(*Capability)(nil),          // 1: anix.agent.v1.Capability
+	(*Hello)(nil),               // 2: anix.agent.v1.Hello
+	(*HelloAck)(nil),            // 3: anix.agent.v1.HelloAck
+	(*Heartbeat)(nil),           // 4: anix.agent.v1.Heartbeat
+	(*PluginObservedState)(nil), // 5: anix.agent.v1.PluginObservedState
+	(*PluginRuleCounter)(nil),   // 6: anix.agent.v1.PluginRuleCounter
+	(*HeartbeatAck)(nil),        // 7: anix.agent.v1.HeartbeatAck
+	(*DesiredOperation)(nil),    // 8: anix.agent.v1.DesiredOperation
+	(*OperationAck)(nil),        // 9: anix.agent.v1.OperationAck
+	(*ObservedState)(nil),       // 10: anix.agent.v1.ObservedState
+	(*AgentToControl)(nil),      // 11: anix.agent.v1.AgentToControl
+	(*ControlToAgent)(nil),      // 12: anix.agent.v1.ControlToAgent
+	nil,                         // 13: anix.agent.v1.Capability.AttributesEntry
+	nil,                         // 14: anix.agent.v1.Hello.LabelsEntry
+	nil,                         // 15: anix.agent.v1.Heartbeat.MetricsEntry
 }
 var file_api_grpc_agent_v1_agent_proto_depIdxs = []int32{
-	11, // 0: anix.agent.v1.Capability.attributes:type_name -> anix.agent.v1.Capability.AttributesEntry
+	13, // 0: anix.agent.v1.Capability.attributes:type_name -> anix.agent.v1.Capability.AttributesEntry
 	1,  // 1: anix.agent.v1.Hello.capabilities:type_name -> anix.agent.v1.Capability
-	12, // 2: anix.agent.v1.Hello.labels:type_name -> anix.agent.v1.Hello.LabelsEntry
-	13, // 3: anix.agent.v1.Heartbeat.metrics:type_name -> anix.agent.v1.Heartbeat.MetricsEntry
-	0,  // 4: anix.agent.v1.ObservedState.phase:type_name -> anix.agent.v1.ObservedPhase
-	2,  // 5: anix.agent.v1.AgentToControl.hello:type_name -> anix.agent.v1.Hello
-	4,  // 6: anix.agent.v1.AgentToControl.heartbeat:type_name -> anix.agent.v1.Heartbeat
-	7,  // 7: anix.agent.v1.AgentToControl.operation_ack:type_name -> anix.agent.v1.OperationAck
-	8,  // 8: anix.agent.v1.AgentToControl.observed_state:type_name -> anix.agent.v1.ObservedState
-	3,  // 9: anix.agent.v1.ControlToAgent.hello_ack:type_name -> anix.agent.v1.HelloAck
-	5,  // 10: anix.agent.v1.ControlToAgent.heartbeat_ack:type_name -> anix.agent.v1.HeartbeatAck
-	6,  // 11: anix.agent.v1.ControlToAgent.desired_operation:type_name -> anix.agent.v1.DesiredOperation
-	9,  // 12: anix.agent.v1.AgentControlService.ControlStream:input_type -> anix.agent.v1.AgentToControl
-	10, // 13: anix.agent.v1.AgentControlService.ControlStream:output_type -> anix.agent.v1.ControlToAgent
-	13, // [13:14] is the sub-list for method output_type
-	12, // [12:13] is the sub-list for method input_type
-	12, // [12:12] is the sub-list for extension type_name
-	12, // [12:12] is the sub-list for extension extendee
-	0,  // [0:12] is the sub-list for field type_name
+	14, // 2: anix.agent.v1.Hello.labels:type_name -> anix.agent.v1.Hello.LabelsEntry
+	15, // 3: anix.agent.v1.Heartbeat.metrics:type_name -> anix.agent.v1.Heartbeat.MetricsEntry
+	5,  // 4: anix.agent.v1.Heartbeat.plugin_observations:type_name -> anix.agent.v1.PluginObservedState
+	6,  // 5: anix.agent.v1.PluginObservedState.rule_counters:type_name -> anix.agent.v1.PluginRuleCounter
+	0,  // 6: anix.agent.v1.ObservedState.phase:type_name -> anix.agent.v1.ObservedPhase
+	2,  // 7: anix.agent.v1.AgentToControl.hello:type_name -> anix.agent.v1.Hello
+	4,  // 8: anix.agent.v1.AgentToControl.heartbeat:type_name -> anix.agent.v1.Heartbeat
+	9,  // 9: anix.agent.v1.AgentToControl.operation_ack:type_name -> anix.agent.v1.OperationAck
+	10, // 10: anix.agent.v1.AgentToControl.observed_state:type_name -> anix.agent.v1.ObservedState
+	3,  // 11: anix.agent.v1.ControlToAgent.hello_ack:type_name -> anix.agent.v1.HelloAck
+	7,  // 12: anix.agent.v1.ControlToAgent.heartbeat_ack:type_name -> anix.agent.v1.HeartbeatAck
+	8,  // 13: anix.agent.v1.ControlToAgent.desired_operation:type_name -> anix.agent.v1.DesiredOperation
+	11, // 14: anix.agent.v1.AgentControlService.ControlStream:input_type -> anix.agent.v1.AgentToControl
+	12, // 15: anix.agent.v1.AgentControlService.ControlStream:output_type -> anix.agent.v1.ControlToAgent
+	15, // [15:16] is the sub-list for method output_type
+	14, // [14:15] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_api_grpc_agent_v1_agent_proto_init() }
@@ -1098,13 +1297,13 @@ func file_api_grpc_agent_v1_agent_proto_init() {
 	if File_api_grpc_agent_v1_agent_proto != nil {
 		return
 	}
-	file_api_grpc_agent_v1_agent_proto_msgTypes[8].OneofWrappers = []any{
+	file_api_grpc_agent_v1_agent_proto_msgTypes[10].OneofWrappers = []any{
 		(*AgentToControl_Hello)(nil),
 		(*AgentToControl_Heartbeat)(nil),
 		(*AgentToControl_OperationAck)(nil),
 		(*AgentToControl_ObservedState)(nil),
 	}
-	file_api_grpc_agent_v1_agent_proto_msgTypes[9].OneofWrappers = []any{
+	file_api_grpc_agent_v1_agent_proto_msgTypes[11].OneofWrappers = []any{
 		(*ControlToAgent_HelloAck)(nil),
 		(*ControlToAgent_HeartbeatAck)(nil),
 		(*ControlToAgent_DesiredOperation)(nil),
@@ -1115,7 +1314,7 @@ func file_api_grpc_agent_v1_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_api_grpc_agent_v1_agent_proto_rawDesc), len(file_api_grpc_agent_v1_agent_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   13,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
