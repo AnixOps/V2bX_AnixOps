@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+## 4.0.0-alpha.5 - 2026-07-17
+
+### Added
+
+- Added `nftables-forward` 1.1.0 runtime-state and signed cleanup support. The
+  plugin accepts the canonical Control package contract, starts safely with
+  `apply=false` and an empty rule set, and rejects active plans without rules
+  or with rollback disabled.
+- Added a durable private ownership journal containing the exact pre-apply
+  nftables table snapshot and managed identity. Journal publication is atomic
+  and fsynced before applying rules, while successful rollback removes it only
+  after the original state is restored.
+- Added `--anixops-state`, `--anixops-cleanup`, and `--anixops-validate` entry
+  modes for Supervisor-owned recovery and preflight validation.
+
+### Fixed
+
+- Restored interrupted nftables ownership before every new apply, including
+  hard process death and Agent restart. Rollback now checks whether the current
+  table exists before deleting it, so missing or externally removed state does
+  not turn cleanup into an invalid nftables transaction.
+- Extended privileged namespace acceptance with `SIGKILL`, persisted-journal,
+  restart recovery, TCP/UDP traffic, created-table deletion, and exact
+  pre-existing table restoration evidence.
+
+### Known Gaps
+
+- This runtime remains opt-in and canary-only. Control must keep topology
+  execution disabled until signed package import, staging restore, fallback,
+  rollout, live kernel-observed health, and 72-hour canary evidence are
+  recorded. Stable 4.0 remains unauthorized.
+
 ## 4.0.0-alpha.4 - 2026-07-17
 
 ### Added

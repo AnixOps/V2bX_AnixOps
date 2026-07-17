@@ -23,12 +23,12 @@ Control，并兼容旧 V2Board/UniProxy 接口；它执行节点配置同步、�
 
 ## 4.0 Alpha 范围
 
-`v4.0.0-alpha.4` 提供 AnixOps 官方签名软件包、WebUI 生命周期操作、真实
-machine-telemetry 指标和 Agent Supervisor 的首个可操作闭环，但不是“所有任务已经全部迁移”的稳定版。新控制流
+`v4.0.0-alpha.5` 提供 AnixOps 官方签名软件包、WebUI 生命周期操作、真实
+machine-telemetry 指标，以及 crash-safe `nftables-forward` 1.1.0，但不是“所有任务已经全部迁移”的稳定版。新控制流
 通过 `AgentControlEnabled` 显式启用，用于握手、能力上报、心跳、受限操作、ACK
-和观察状态；`PluginSupervisorEnabled` 再独立启用官方包安装与运行。alpha.4
-在保留按最终注册节点 ID 和 Control 身份隔离的基础上增加 telemetry RPC、心跳指标
-和可重试生命周期关闭；全新安装使用
+和观察状态；`PluginSupervisorEnabled` 再独立启用官方包安装与运行。alpha.5
+在 alpha.4 的 telemetry RPC、心跳指标和可重试生命周期关闭基础上，增加
+nftables ownership journal、签名 cleanup/validate 入口和进程崩溃恢复；全新安装使用
 `nodes/<node_id>` 状态目录，已有状态的单节点升级继续读取旧布局。现有
 REST/UniProxy、旧版 gRPC 与 WebSocket 链路仍作为数据面和回退路径。生产部署
 应先在少量节点验证 TLS、重连、包签名、操作幂等和回滚，再逐步扩大范围。
@@ -42,11 +42,12 @@ REST/UniProxy、旧版 gRPC 与 WebSocket 链路仍作为数据面和回退路�
 TUIC 不属于 v1，因为该固定 GOST 版本不实现 TUIC。业务流量由内核网络栈或
 GOST 子进程承载，不经过 Supervisor 控制进程。
 
-`nat-egress` 清单声明 `plugin.runtime-state` 和 `plugin.cleanup`。Supervisor
-为它保留稳定的私有 ownership journal，并在崩溃、禁用、配置变更、升级和关闭
+`nftables-forward` 1.1.0 与 `nat-egress` 清单声明 `plugin.runtime-state` 和
+`plugin.cleanup`。Supervisor 为它们保留稳定的私有 ownership journal，并在崩溃、禁用、配置变更、升级和关闭
 时调用签名 cleanup 入口。清理失败会持久化 `cleanup_pending`，插件保持禁用；
 升级目标版本的清理成功后才允许自动启动旧版本，避免旧版本覆盖可能残留的路由
-或 NAT 状态。
+或 NAT 状态。`nftables-forward` 在安装后默认保持 `apply=false`，只有显式规则
+和 `apply=true` 才会修改内核；硬退出后的下一次启动先恢复原表快照。
 
 特权 namespace 验收已覆盖 marked forwarded traffic、wrong-mark isolation、
 policy route、masquerade、正常退出清理和既有状态恢复：
@@ -54,6 +55,14 @@ policy route、masquerade、正常退出清理和既有状态恢复：
 ```bash
 sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
   bash plugin/nategress/namespace_acceptance.sh
+```
+
+`nftables-forward` 还覆盖 TCP/UDP DNAT、正常回滚、`SIGKILL` journal 留存和
+同一 state path 的重启恢复：
+
+```bash
+sudo env GOEXPERIMENT=jsonv2 GOWORK=off \
+  bash plugin/nftablesforward/namespace_acceptance.sh
 ```
 
 这些能力仍是预览：生产启用必须使用正式签名 Release，并完成 mark producer、
@@ -81,7 +90,7 @@ FORWARD 防火墙策略、Control Secret-ID 私有文件物化、组合拓扑、
 克隆仓库或执行本地发行构建。
 
 ```bash
-export VERSION=v4.0.0-alpha.4
+export VERSION=v4.0.0-alpha.5
 curl -fsSL \
   "https://raw.githubusercontent.com/AnixOps/anix-agent/${VERSION}/scripts/install.sh" \
   -o /tmp/anix-agent-install.sh
@@ -109,7 +118,7 @@ anix-agent server -c /etc/anixops/agent/config.json
 ```
 
 安装器接受稳定版以及 `alpha`、`beta`、`rc` 预发布 tag，例如
-`v4.0.0-alpha.4`、`v4.0.0-beta.1` 和 `v4.0.0-rc.1`。
+`v4.0.0-alpha.5`、`v4.0.0-beta.1` 和 `v4.0.0-rc.1`。
 
 ## 从 V2bX_AnixOps 升级
 

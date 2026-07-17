@@ -154,8 +154,12 @@ old version; the old version is started only after target cleanup succeeds.
 This intentionally prefers no stale nftables or policy-routing ownership over
 automatic availability.
 
-The `nat-egress` and `gost-mesh` runtimes use this contract for private
-crash-safe ownership journals. `gost-mesh` also consumes a signed pinned GOST
+The `nftables-forward` 1.1.0, `nat-egress`, and `gost-mesh` runtimes use this
+contract for private crash-safe ownership journals. `nftables-forward` writes
+the original table snapshot before applying rules, restores an interrupted
+journal before a new start, and exposes signed cleanup and config-validation
+modes. Its privileged namespace test includes process `SIGKILL` and same-state
+Agent restart recovery. `gost-mesh` also consumes a signed pinned GOST
 runtime from `runtime/gost`; QUIC and WSS require mutual TLS, and its privileged
 namespace matrix proves TCP/UDP data flow, TLS rejection, policy routing, child
 cleanup, and unrelated-state preservation. TUIC is not a GOST Mesh v1
