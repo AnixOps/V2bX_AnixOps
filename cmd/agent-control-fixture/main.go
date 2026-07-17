@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
+	agentapi "github.com/AnixOps/anix-agent/v4/api/agent"
 	"github.com/AnixOps/anix-agent/v4/plugin"
 )
 
