@@ -17,6 +17,7 @@
 - Generated protobuf files are only produced by SDK generation scripts.
 - Root modules never commit `replace`; ordinary CI uses `GOWORK=off` and an exact SDK tag.
 - A local workspace contains `anix-control`, `anix-agent`, and `anix-agent/sdk`, but its `go.work` is not committed.
+- The local `go.work` owns version-specific SDK `replace` directives for each pinned candidate or stable version; those directives never enter a root `go.mod`.
 - Preserve current REST, v2board gRPC, WebSocket, and Agent-first runtime behavior during this migration.
 
 ## File Map
@@ -613,6 +614,8 @@ Expected: server, recovery, bridge, handler, and existing process-E2E semantics 
 - `ANIXOPS_AGENT_ROOT` selects the Agent checkout.
 - Optional `ANIXOPS_AGENT_GO` selects the Agent Go 1.25 binary.
 - A caller-supplied `GOWORK` is preserved; an absent `GOWORK` remains `off` for existing standalone E2E behavior.
+
+**Workspace note:** The shared workspace intentionally runs only SDK, `anix-agent/api/agent`, `anix-agent/node`, and the cross-repository E2E. The current Agent QUIC stack requires `github.com/quic-go/qpack v0.5.1`, while Control's Gin dependency selects `v0.6.0`; Go MVS therefore makes a full Agent `./...` run fail in the three-module graph. Run the full Agent suite in an Agent+SDK workspace or with `GOWORK=off` after publishing the SDK tag. Resolving the QUIC dependency mismatch is a separate dependency-upgrade task.
 
 - [ ] **Step 1: Preserve caller workspace and Agent toolchain in fixture builders**
 

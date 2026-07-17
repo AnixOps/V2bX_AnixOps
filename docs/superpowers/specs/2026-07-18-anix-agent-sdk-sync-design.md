@@ -84,6 +84,11 @@ anixops-workspace/
 module。Go 在本地联调时因此解析 SDK 工作副本，任何协议或辅助 API 改动都会立即
 被两端编译和测试发现。
 
+当根 module 已固定 SDK tag 时，未提交的 `go.work` 还为该精确版本添加指向
+`anix-agent/sdk` 工作副本的 version-specific `replace`。这是本地工作区的解析
+规则，不进入任一根 module 的 `go.mod`；例如首期候选版本使用
+`replace github.com/AnixOps/anix-agent/sdk v1.0.0-rc.1 => ./anix-agent/sdk`。
+
 两个根 module 的 `go.mod` 始终保留一个精确、已发布的 SDK 版本。不会提交
 `replace` 指令，也不会让任一仓库跟踪 Agent 开发分支或伪版本。常规 CI 以
 `GOWORK=off` 运行，保证合并结果和发行制品可由公开 tag 重现。
