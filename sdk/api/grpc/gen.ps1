@@ -1,10 +1,8 @@
 param()
 
 $ErrorActionPreference = "Stop"
-$ModulePath = "github.com/AnixOps/anix-agent/v4"
-$ProtoFiles = @(
-    "api/grpc/v2board.proto"
-)
+$ModulePath = "github.com/AnixOps/anix-agent/sdk"
+$ProtoFile = "api/grpc/agent/v1/agent.proto"
 
 foreach ($CommandName in @("protoc", "protoc-gen-go", "protoc-gen-go-grpc")) {
     if (-not (Get-Command $CommandName -ErrorAction SilentlyContinue)) {
@@ -12,17 +10,16 @@ foreach ($CommandName in @("protoc", "protoc-gen-go", "protoc-gen-go-grpc")) {
     }
 }
 
-$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
-Push-Location $RepoRoot
+$SdkRoot = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+Push-Location $SdkRoot
 try {
     protoc `
         --go_out=. `
         "--go_opt=module=$ModulePath" `
         --go-grpc_out=. `
         "--go-grpc_opt=module=$ModulePath" `
-        $ProtoFiles
-
-    Write-Host "Generated legacy gRPC bindings."
+        $ProtoFile
+    Write-Host "Generated AnixOps Agent SDK gRPC bindings."
 }
 finally {
     Pop-Location

@@ -17,7 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
+	agentcontrol "github.com/AnixOps/anix-agent/sdk/agentcontrol"
+	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
 	log "github.com/sirupsen/logrus"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -28,7 +29,7 @@ import (
 )
 
 const (
-	ProtocolVersion         = "anix.agent.v1"
+	ProtocolVersion         = agentcontrol.ProtocolV1
 	defaultHeartbeat        = 20 * time.Second
 	defaultReconnectMin     = time.Second
 	defaultReconnectMax     = 30 * time.Second

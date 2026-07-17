@@ -1234,7 +1234,7 @@ const file_api_grpc_agent_v1_agent_proto_rawDesc = "" +
 	"\x15OBSERVED_PHASE_FAILED\x10\x04\x12\x1d\n" +
 	"\x19OBSERVED_PHASE_SUPERSEDED\x10\x052h\n" +
 	"\x13AgentControlService\x12Q\n" +
-	"\rControlStream\x12\x1d.anix.agent.v1.AgentToControl\x1a\x1d.anix.agent.v1.ControlToAgent(\x010\x01B>Z<github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1;agentv1pbb\x06proto3"
+	"\rControlStream\x12\x1d.anix.agent.v1.AgentToControl\x1a\x1d.anix.agent.v1.ControlToAgent(\x010\x01B?Z=github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1;agentv1pbb\x06proto3"
 
 var (
 	file_api_grpc_agent_v1_agent_proto_rawDescOnce sync.Once

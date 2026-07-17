@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	agentv1pb "github.com/AnixOps/anix-agent/v4/api/grpc/agent/v1"
+	agentv1pb "github.com/AnixOps/anix-agent/sdk/api/grpc/agent/v1"
 )
 
 const (

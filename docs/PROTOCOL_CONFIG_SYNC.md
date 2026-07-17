@@ -752,7 +752,7 @@ func (sm *SyncManager) Close() error {
 ## 5. 实现计划
 
 以下阶段记录的是早期 WebSocket 方案。当前 v3 alpha 的实现与交付语义以
-`api/grpc/agent/v1/PROTOCOL.md` 为准；尚未迁移的任务源继续按本节兼容方案
+`sdk/api/grpc/agent/v1/PROTOCOL.md` 为准；尚未迁移的任务源继续按本节兼容方案
 运行。
 
 ### 5.1 Phase 1: 基础设施 (Week 1)
