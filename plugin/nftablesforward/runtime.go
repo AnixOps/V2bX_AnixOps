@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -23,13 +24,14 @@ import (
 
 const (
 	ID              = "nftables-forward"
-	Version         = "1.0.0"
+	Version         = "1.1.0"
 	DefaultFamily   = "inet"
 	DefaultTable    = "anixops_forward"
 	DefaultChain    = "prerouting"
 	maxConfigBytes  = 256 << 10
 	maxRules        = 1024
 	defaultPriority = -100
+	commandTimeout  = 30 * time.Second
 )
 
 type Config struct {
@@ -55,14 +57,14 @@ type Rule struct {
 }
 
 type rawConfig struct {
-	Apply          bool            `json:"apply"`
+	Apply          *bool           `json:"apply"`
 	NftBinary      string          `json:"nft_binary"`
 	PlanPath       string          `json:"plan_path"`
 	Family         string          `json:"family"`
 	Table          string          `json:"table"`
 	Chain          string          `json:"chain"`
 	Priority       *int            `json:"priority"`
-	RollbackOnExit bool            `json:"rollback_on_exit"`
+	RollbackOnExit *bool           `json:"rollback_on_exit"`
 	Rules          json.RawMessage `json:"rules"`
 }
 
@@ -79,6 +81,7 @@ type rawRule struct {
 type Options struct {
 	SocketPath string
 	ConfigPath string
+	StatePath  string
 	Applier    Applier
 }
 
@@ -87,8 +90,8 @@ type Applier interface {
 }
 
 type TableSnapshot struct {
-	Exists  bool
-	Ruleset string
+	Exists  bool   `json:"exists"`
+	Ruleset string `json:"ruleset,omitempty"`
 }
 
 type Snapshotter interface {
@@ -208,14 +211,19 @@ func ParseConfig(contents []byte) (Config, error) {
 	}
 
 	config := Config{
-		Apply:          raw.Apply,
 		NftBinary:      strings.TrimSpace(raw.NftBinary),
 		PlanPath:       strings.TrimSpace(raw.PlanPath),
 		Family:         strings.TrimSpace(raw.Family),
 		Table:          strings.TrimSpace(raw.Table),
 		Chain:          strings.TrimSpace(raw.Chain),
 		Priority:       defaultPriority,
-		RollbackOnExit: raw.RollbackOnExit,
+		RollbackOnExit: true,
+	}
+	if raw.Apply != nil {
+		config.Apply = *raw.Apply
+	}
+	if raw.RollbackOnExit != nil {
+		config.RollbackOnExit = *raw.RollbackOnExit
 	}
 	if config.Family == "" {
 		config.Family = DefaultFamily
@@ -229,18 +237,6 @@ func ParseConfig(contents []byte) (Config, error) {
 	if raw.Priority != nil {
 		config.Priority = *raw.Priority
 	}
-	if err := validateRulesetNames(config); err != nil {
-		return Config{}, err
-	}
-	if config.PlanPath != "" && !filepath.IsAbs(config.PlanPath) {
-		return Config{}, errors.New("plan_path must be absolute")
-	}
-	if config.NftBinary != "" && strings.ContainsAny(config.NftBinary, "\x00\r\n") {
-		return Config{}, errors.New("nft_binary is invalid")
-	}
-	if config.Priority < -500 || config.Priority > 500 {
-		return Config{}, errors.New("priority must be between -500 and 500")
-	}
 	if len(raw.Rules) == 0 {
 		return Config{}, errors.New("rules must be declared")
 	}
@@ -249,9 +245,6 @@ func ParseConfig(contents []byte) (Config, error) {
 	ruleDecoder.DisallowUnknownFields()
 	if err := ruleDecoder.Decode(&rawRules); err != nil {
 		return Config{}, fmt.Errorf("decode forwarding rules: %w", err)
-	}
-	if len(rawRules) == 0 {
-		return Config{}, errors.New("at least one forwarding rule is required")
 	}
 	if len(rawRules) > maxRules {
 		return Config{}, fmt.Errorf("forwarding rules exceed %d entries", maxRules)
@@ -268,7 +261,48 @@ func ParseConfig(contents []byte) (Config, error) {
 		seenIDs[rule.ID] = true
 		config.Rules = append(config.Rules, rule)
 	}
+	if err := config.Validate(); err != nil {
+		return Config{}, err
+	}
 	return config, nil
+}
+
+func (c Config) Validate() error {
+	if !c.RollbackOnExit {
+		return errors.New("rollback_on_exit must remain enabled for the nftables-forward v1.1 crash-safe lifecycle")
+	}
+	if err := validateRulesetNames(c); err != nil {
+		return err
+	}
+	if c.PlanPath != "" && (!filepath.IsAbs(c.PlanPath) || filepath.Clean(c.PlanPath) != c.PlanPath) {
+		return errors.New("plan_path must be absolute and canonical")
+	}
+	if c.NftBinary != "" && strings.ContainsAny(c.NftBinary, "\x00\r\n") {
+		return errors.New("nft_binary is invalid")
+	}
+	if c.Priority < -500 || c.Priority > 500 {
+		return errors.New("priority must be between -500 and 500")
+	}
+	if len(c.Rules) > maxRules {
+		return fmt.Errorf("forwarding rules exceed %d entries", maxRules)
+	}
+	if c.Apply && len(c.Rules) == 0 {
+		return errors.New("apply=true requires at least one forwarding rule")
+	}
+	seenIDs := make(map[string]bool, len(c.Rules))
+	for index, rule := range c.Rules {
+		if !safeRuleID(rule.ID) || (rule.Protocol != "tcp" && rule.Protocol != "udp") {
+			return fmt.Errorf("rule %d is invalid", index)
+		}
+		if seenIDs[rule.ID] {
+			return fmt.Errorf("rule %q is duplicated", rule.ID)
+		}
+		seenIDs[rule.ID] = true
+		if err := validateRuleForFamily(c.Family, rule); err != nil {
+			return fmt.Errorf("rule %q: %w", rule.ID, err)
+		}
+	}
+	return nil
 }
 
 func validateRulesetNames(config Config) error {
@@ -324,11 +358,8 @@ func normalizeRule(raw rawRule) (Rule, error) {
 }
 
 func RenderRuleset(config Config) (string, error) {
-	if err := validateRulesetNames(config); err != nil {
+	if err := config.Validate(); err != nil {
 		return "", err
-	}
-	if len(config.Rules) == 0 {
-		return "", errors.New("at least one forwarding rule is required")
 	}
 	var builder strings.Builder
 	fmt.Fprintf(&builder, "add table %s %s\n", config.Family, config.Table)
@@ -372,7 +403,7 @@ func validateRuleForFamily(family string, rule Rule) error {
 	return nil
 }
 
-func Run(ctx context.Context, options Options) error {
+func Run(ctx context.Context, options Options) (runErr error) {
 	if ctx == nil {
 		return errors.New("plugin context is required")
 	}
@@ -393,30 +424,31 @@ func Run(ctx context.Context, options Options) error {
 	if applier == nil {
 		applier = CommandApplier{}
 	}
-	var rollbackRuleset string
-	if config.Apply && config.RollbackOnExit {
-		snapshotter, ok := applier.(Snapshotter)
-		if ok {
-			snapshotCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			snapshot, snapshotErr := snapshotter.Snapshot(snapshotCtx, config.NftBinary, config.Family, config.Table)
-			cancel()
-			if snapshotErr != nil {
-				return snapshotErr
-			}
-			rollbackRuleset, err = RenderRollbackFromSnapshot(config, snapshot)
-		} else {
-			rollbackRuleset, err = RenderRollback(config)
-		}
-		if err != nil {
-			return err
-		}
+	statePath, err := privateStatePath(options.StatePath)
+	if err != nil {
+		return err
 	}
 	if config.Apply {
-		applyCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err := applier.Apply(applyCtx, config.NftBinary, ruleset)
+		if runtime.GOOS != "linux" {
+			return errors.New("nftables-forward apply is supported only on Linux")
+		}
+		applyCtx, cancel := context.WithTimeout(ctx, commandTimeout)
+		state, applyErr := applyManagedRuleset(applyCtx, applier, config, ruleset, statePath)
+		cancel()
+		if applyErr != nil {
+			return applyErr
+		}
+		defer func() {
+			if config.RollbackOnExit || runErr != nil {
+				runErr = errors.Join(runErr, state.rollbackWithTimeout())
+			}
+		}()
+	} else {
+		cleanupCtx, cancel := context.WithTimeout(ctx, commandTimeout)
+		err = cleanupOwnershipJournal(cleanupCtx, applier, statePath)
 		cancel()
 		if err != nil {
-			return err
+			return fmt.Errorf("recover interrupted nftables-forward state before observation mode: %w", err)
 		}
 	}
 
@@ -448,19 +480,6 @@ func Run(ctx context.Context, options Options) error {
 		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
 			return fmt.Errorf("serve plugin health API: %w", err)
 		}
-		if config.Apply && config.RollbackOnExit {
-			if rollbackRuleset == "" {
-				rollbackRuleset, err = RenderRollback(config)
-				if err != nil {
-					return err
-				}
-			}
-			rollbackCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if err := applier.Apply(rollbackCtx, config.NftBinary, rollbackRuleset); err != nil {
-				return err
-			}
-		}
 		return nil
 	case err := <-serveResult:
 		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
@@ -488,7 +507,7 @@ func RenderRollbackFromSnapshot(config Config, snapshot TableSnapshot) (string, 
 	if ruleset == "" {
 		return "", errors.New("snapshot ruleset is empty")
 	}
-	return fmt.Sprintf("flush table %s %s\n%s\n", config.Family, config.Table, ruleset), nil
+	return fmt.Sprintf("delete table %s %s\n%s\n", config.Family, config.Table, ruleset), nil
 }
 
 func writePrivatePlan(path, ruleset string) error {

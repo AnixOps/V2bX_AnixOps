@@ -24,8 +24,9 @@ temporary Linux network namespaces that:
 
 1. TCP DNAT forwards client traffic to the target namespace.
 2. UDP DNAT forwards client traffic to the target namespace.
-3. rollback_on_exit deletes a plugin-created nftables table.
-4. rollback_on_exit restores a pre-existing nftables table snapshot.
+3. SIGKILL leaves a durable journal and restart recovers it before re-apply.
+4. rollback_on_exit deletes a plugin-created nftables table.
+5. rollback_on_exit restores a pre-existing nftables table snapshot.
 
 This script modifies only temporary network namespaces named with the current
 process ID and deletes them on exit.
@@ -167,6 +168,7 @@ ip netns exec "${ROUTER_NS}" sysctl -q -w net.ipv4.ip_forward=1
 
 CONFIG="${WORK_DIR}/plugin.json"
 SOCKET="${WORK_DIR}/plugin.sock"
+STATE="${WORK_DIR}/ownership.json"
 cat >"${CONFIG}" <<EOF
 {
   "apply": true,
@@ -204,7 +206,7 @@ ip netns exec "${TARGET_NS}" "${PYTHON_BIN}" "${TCP_SERVER}" &
 TCP_PID="$!"
 ip netns exec "${TARGET_NS}" "${PYTHON_BIN}" "${UDP_SERVER}" &
 UDP_PID="$!"
-ip netns exec "${ROUTER_NS}" "${AGENT_BINARY}" --anixops-config "${CONFIG}" --anixops-socket "${SOCKET}" &
+ip netns exec "${ROUTER_NS}" "${AGENT_BINARY}" --anixops-config "${CONFIG}" --anixops-socket "${SOCKET}" --anixops-state "${STATE}" &
 PLUGIN_PID="$!"
 
 for _ in {1..50}; do
@@ -217,12 +219,33 @@ grep -q "tcp-namespace" <<<"${RULESET}" || fail "TCP nftables rule was not insta
 grep -q "udp-namespace" <<<"${RULESET}" || fail "UDP nftables rule was not installed: ${RULESET}"
 timeout 10 ip netns exec "${CLIENT_NS}" "${PYTHON_BIN}" "${CLIENT_CHECK}"
 
+kill -KILL "${PLUGIN_PID}"
+if wait "${PLUGIN_PID}"; then
+  fail "plugin unexpectedly exited cleanly after SIGKILL"
+fi
+PLUGIN_PID=""
+[[ -f "${STATE}" ]] || fail "ownership journal was not durable after SIGKILL"
+ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward >/dev/null 2>&1 || fail "nftables table disappeared before restart recovery"
+rm -f "${SOCKET}"
+
+# A fresh process must recover the durable journal before applying its new
+# generation. This is the crash/restart path that the Supervisor uses after an
+# Agent restart, not a direct best-effort table delete.
+ip netns exec "${ROUTER_NS}" "${AGENT_BINARY}" --anixops-config "${CONFIG}" --anixops-socket "${SOCKET}" --anixops-state "${STATE}" &
+PLUGIN_PID="$!"
+for _ in {1..50}; do
+  [[ -S "${SOCKET}" ]] && break
+  sleep 0.1
+done
+[[ -S "${SOCKET}" ]] || fail "plugin socket did not become ready after restart recovery"
+ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward >/dev/null 2>&1 || fail "nftables table was not re-installed after restart recovery"
 kill "${PLUGIN_PID}"
 wait "${PLUGIN_PID}"
 PLUGIN_PID=""
 if ip netns exec "${ROUTER_NS}" nft list table inet anixops_forward >/dev/null 2>&1; then
-  fail "plugin-created nftables table still exists after rollback_on_exit"
+  fail "plugin-created nftables table still exists after graceful rollback"
 fi
+[[ ! -e "${STATE}" ]] || fail "ownership journal survived successful rollback"
 
 SNAPSHOT_TABLE="${WORK_DIR}/snapshot.nft"
 cat >"${SNAPSHOT_TABLE}" <<'EOF'
@@ -234,7 +257,7 @@ table inet anixops_forward {
 }
 EOF
 ip netns exec "${ROUTER_NS}" nft -f "${SNAPSHOT_TABLE}"
-ip netns exec "${ROUTER_NS}" "${AGENT_BINARY}" --anixops-config "${CONFIG}" --anixops-socket "${SOCKET}" &
+ip netns exec "${ROUTER_NS}" "${AGENT_BINARY}" --anixops-config "${CONFIG}" --anixops-socket "${SOCKET}" --anixops-state "${STATE}" &
 PLUGIN_PID="$!"
 for _ in {1..50}; do
   [[ -S "${SOCKET}" ]] && break
@@ -257,3 +280,4 @@ printf 'tcp_dnat=true\n'
 printf 'udp_dnat=true\n'
 printf 'rollback_created_table=deleted\n'
 printf 'rollback_existing_table=snapshot_restored\n'
+printf 'crash_restart_recovery=true\n'

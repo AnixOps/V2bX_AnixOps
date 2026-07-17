@@ -33,7 +33,7 @@ func TestParseConfigValidatesSignedContract(t *testing.T) {
 		},
 		{name: "unknown field", contents: `{"rules":[],"command":"id"}`, wantError: "unknown field"},
 		{name: "missing rules", contents: `{}`, wantError: "rules must be declared"},
-		{name: "empty rules", contents: `{"rules":[]}`, wantError: "at least one"},
+		{name: "apply empty rules", contents: `{"apply":true,"rules":[]}`, wantError: "at least one"},
 		{name: "bad protocol", contents: `{"rules":[{"id":"r1","protocol":"icmp","listen_address":"198.51.100.10","listen_port":443,"target_address":"203.0.113.10","target_port":8443}]}`, wantError: "protocol"},
 		{name: "bad listen address", contents: `{"rules":[{"id":"r1","protocol":"tcp","listen_address":"0.0.0.0","listen_port":443,"target_address":"203.0.113.10","target_port":8443}]}`, wantError: "unicast"},
 		{name: "mixed family", contents: `{"rules":[{"id":"r1","protocol":"tcp","listen_address":"198.51.100.10","listen_port":443,"target_address":"2001:db8::20","target_port":8443}]}`, wantError: "same IP family"},
@@ -112,12 +112,13 @@ func TestRunDryRunServesHealthWritesPlanAndCleansSocket(t *testing.T) {
 	configPath := filepath.Join(dir, "config.json")
 	planPath := filepath.Join(dir, "plan.nft")
 	socketPath := filepath.Join(dir, "plugin.sock")
+	statePath := filepath.Join(dir, "ownership.json")
 	require.NoError(t, os.WriteFile(configPath, []byte(strings.Replace(validConfigJSON("dry-run"), `"rules"`, `"plan_path":"`+planPath+`","rules"`, 1)), 0o600))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- Run(ctx, Options{SocketPath: socketPath, ConfigPath: configPath})
+		result <- Run(ctx, Options{SocketPath: socketPath, ConfigPath: configPath, StatePath: statePath})
 	}()
 
 	connection := waitForHealth(t, socketPath)
@@ -145,6 +146,7 @@ func TestRunApplyAndRollbackOnExit(t *testing.T) {
 	require.NoError(t, os.Chmod(dir, 0o700))
 	configPath := filepath.Join(dir, "config.json")
 	socketPath := filepath.Join(dir, "plugin.sock")
+	statePath := filepath.Join(dir, "ownership.json")
 	config := strings.Replace(validConfigJSON("apply-1"), `"rules"`, `"apply":true,"rollback_on_exit":true,"rules"`, 1)
 	require.NoError(t, os.WriteFile(configPath, []byte(config), 0o600))
 
@@ -152,7 +154,7 @@ func TestRunApplyAndRollbackOnExit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	result := make(chan error, 1)
 	go func() {
-		result <- Run(ctx, Options{SocketPath: socketPath, ConfigPath: configPath, Applier: applier})
+		result <- Run(ctx, Options{SocketPath: socketPath, ConfigPath: configPath, StatePath: statePath, Applier: applier})
 	}()
 
 	connection := waitForHealth(t, socketPath)
@@ -167,9 +169,9 @@ func TestRunApplyAndRollbackOnExit(t *testing.T) {
 	calls := applier.Calls()
 	require.Len(t, calls, 2)
 	require.Contains(t, calls[0], "dnat to 203.0.113.10:8443")
-	require.Equal(t, "delete table inet anixops_forward\n", calls[1])
+	require.Contains(t, calls[1], "delete table inet anixops_forward")
 	snapshots := applier.Snapshots()
-	require.Equal(t, []string{"inet anixops_forward"}, snapshots)
+	require.Equal(t, []string{"inet anixops_forward", "inet anixops_forward"}, snapshots)
 }
 
 func TestRenderRollbackFromSnapshotRestoresExistingTable(t *testing.T) {
@@ -186,18 +188,19 @@ func TestRenderRollbackFromSnapshotRestoresExistingTable(t *testing.T) {
 `,
 	})
 	require.NoError(t, err)
-	require.Contains(t, rollback, "flush table inet anixops_forward")
+	require.Contains(t, rollback, "delete table inet anixops_forward")
 	require.Contains(t, rollback, `ip daddr 198.51.100.20 tcp dport 443 dnat ip to 203.0.113.20:8443 comment "pre-existing"`)
 
 	rollback, err = RenderRollbackFromSnapshot(config, TableSnapshot{Exists: false})
 	require.NoError(t, err)
-	require.Equal(t, "delete table inet anixops_forward\n", rollback)
+	require.Contains(t, rollback, "delete table inet anixops_forward")
 }
 
 type recordingApplier struct {
 	mu        sync.Mutex
 	calls     []string
 	snapshots []string
+	exists    bool
 }
 
 func (a *recordingApplier) Apply(ctx context.Context, nftBinary, ruleset string) error {
@@ -207,6 +210,11 @@ func (a *recordingApplier) Apply(ctx context.Context, nftBinary, ruleset string)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.calls = append(a.calls, ruleset)
+	if strings.Contains(ruleset, "add rule ") {
+		a.exists = true
+	} else if strings.Contains(ruleset, "delete table ") {
+		a.exists = false
+	}
 	return nil
 }
 
@@ -217,7 +225,7 @@ func (a *recordingApplier) Snapshot(ctx context.Context, nftBinary, family, tabl
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.snapshots = append(a.snapshots, family+" "+table)
-	return TableSnapshot{Exists: false}, nil
+	return TableSnapshot{Exists: a.exists}, nil
 }
 
 func (a *recordingApplier) Calls() []string {
