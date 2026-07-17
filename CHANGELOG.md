@@ -64,7 +64,7 @@
   production activation still requires a signed release, topology prerequisites,
   staged canary evidence, and operator approval. `gost-mesh` now has real QUIC
   and WSS runtime evidence; TUIC is intentionally outside GOST Mesh v1 because
-  pinned GOST v3.2.6 does not implement it. Control Secret-ID materialization,
-  status execution, GOST-to-NAT composition, and sustained canary evidence are
-  still pending.
+  pinned GOST v3.2.6 does not implement it. Control status execution is now
+  version-bound; Secret-ID materialization, GOST-to-NAT composition, and
+  sustained canary evidence are still pending.
 - `v2.5.0-rc.6` passed the release-gated QUIC and WSS namespace acceptance jobs. Real geographically separated dual-node evidence and real-client import evidence are still not complete. Runtime health reporting and GOST process supervision do not replace those production observations.
