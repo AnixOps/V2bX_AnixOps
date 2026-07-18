@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+sdk_root="$(cd "${script_dir}/.." && pwd)"
 repository_url="${SDK_REPOSITORY_URL:-https://github.com/AnixOps/anix-agent.git}"
 base_tag="${SDK_BASE_TAG:-}"
+
+cd "${sdk_root}"
+GOWORK=off go test ./plugincontrol >&2
 
 if [[ -z "${base_tag}" ]]; then
 	base_tag="$(git ls-remote --tags --refs "${repository_url}" 'sdk/v1.*' \
