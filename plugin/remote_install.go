@@ -147,7 +147,7 @@ func (i *RemoteInstaller) validateSpec(spec *remoteInstallSpec) error {
 	if !safeSegment(spec.PluginID) || !safeSegment(spec.Version) {
 		return errors.New("plugin install identity is invalid")
 	}
-	if spec.Manifest.Publisher != manifestPublisher || spec.Manifest.APIVersion != pluginAPIVersion {
+	if spec.Manifest.Publisher != manifestPublisher || !isSupportedPluginAPIVersion(spec.Manifest.APIVersion) {
 		return errors.New("plugin install manifest metadata is not official or supported")
 	}
 	if spec.Manifest.KeyID != trustRootKeyID(i.supervisor.publicKey) {

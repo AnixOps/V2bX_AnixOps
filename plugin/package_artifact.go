@@ -64,6 +64,12 @@ func materializeAgentArtifact(manifest Manifest, artifact []byte) ([]byte, bool,
 }
 
 func resolveAgentEntrypoint(manifest Manifest, goos, goarch string) (string, bool) {
+	if manifest.APIVersion == pluginAPIVersionV2 {
+		if manifest.AgentEntrypoint == nil {
+			return "", false
+		}
+		return manifest.AgentEntrypoint.Path, true
+	}
 	for _, key := range []string{"agent-" + goos + "-" + goarch, "agent-any", "agent"} {
 		if entrypoint := strings.TrimSpace(manifest.Entrypoints[key]); entrypoint != "" {
 			return entrypoint, true

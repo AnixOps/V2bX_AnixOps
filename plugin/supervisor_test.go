@@ -886,7 +886,7 @@ func TestManifestContractValidation(t *testing.T) {
 		mutate  func(*Manifest)
 		wantErr string
 	}{
-		{name: "API version", mutate: func(m *Manifest) { m.APIVersion = "v2" }, wantErr: "API version"},
+		{name: "API version", mutate: func(m *Manifest) { m.APIVersion = "v3" }, wantErr: "API version"},
 		{name: "unsafe version", mutate: func(m *Manifest) { m.Version = "../1.0.0" }, wantErr: "safe path"},
 		{name: "wrong architecture", mutate: func(m *Manifest) { m.Architectures = []string{"windows/amd64"} }, wantErr: "does not support"},
 		{name: "duplicate architecture", mutate: func(m *Manifest) { m.Architectures = []string{"amd64", "amd64"} }, wantErr: "duplicate"},
