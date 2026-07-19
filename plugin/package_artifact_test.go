@@ -1,17 +1,22 @@
 package plugin
 
 import (
+	"archive/tar"
 	"archive/zip"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,6 +53,170 @@ func TestSupervisorInstallsPlatformEntrypointFromSignedPackage(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(versionDir, pluginBinaryName), []byte("tampered"), 0o750))
 	_, err = supervisor.verifyInstalledVersion("package-test", "1.0.0")
 	require.ErrorContains(t, err, "does not match the signed package entrypoint")
+}
+
+func TestSupervisorInstallsV2IndexedPlatformEntrypoint(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	supervisor, err := NewSupervisor(Config{RootDir: root, PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+	require.NoError(t, err)
+
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	otherPlatform := "linux/arm64"
+	if platform == otherPlatform {
+		otherPlatform = "linux/amd64"
+	}
+	selectedPath := "agent/" + strings.ReplaceAll(platform, "/", "-") + "/plugin"
+	otherPath := "agent/" + strings.ReplaceAll(otherPlatform, "/", "-") + "/plugin"
+	selectedBinary := []byte("signed indexed platform executable")
+	otherBinary := []byte("signed indexed other executable")
+	index := makeV2AgentEntrypointIndex(t, []v2AgentEntrypointIndexEntry{
+		{Architecture: platform, Path: selectedPath, SHA256: sha256Hex(selectedBinary)},
+		{Architecture: otherPlatform, Path: otherPath, SHA256: sha256Hex(otherBinary)},
+	})
+	migrations := []byte(`{"format":"anixops.migrations/v1","migrations":[]}`)
+	routes := []byte(`{"api_version":"v2","routes":[]}`)
+	artifact := makeZipArtifact(t, map[string][]byte{
+		"agent/entrypoints.json": index,
+		selectedPath:             selectedBinary,
+		otherPath:                otherBinary,
+		"migrations/index.json":  migrations,
+		"compat/v2-routes.json":  routes,
+	})
+	request := signedPackageRequest(t, privateKey, artifact, Manifest{
+		ID: "indexed-package", Name: "Indexed Package", Version: "4.0.0", APIVersion: pluginAPIVersionV2,
+		Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{platform, otherPlatform},
+		AgentEntrypoint:     &ManifestEntrypoint{Path: "agent/entrypoints.json", SHA256: sha256Hex(index)},
+		Migrations:          &ManifestMigrations{Index: "migrations/index.json", SHA256: sha256Hex(migrations)},
+		CompatibilityRoutes: &ManifestCompatibilityRoutes{Path: "compat/v2-routes.json", SHA256: sha256Hex(routes)},
+		RouteContractDigest: sha256Hex(routes), RuntimeAPIVersion: agentRuntimeAPIVersionV110,
+	})
+
+	_, err = supervisor.Install(context.Background(), request)
+	require.NoError(t, err)
+	installed, err := os.ReadFile(filepath.Join(root, "indexed-package", "4.0.0", pluginBinaryName))
+	require.NoError(t, err)
+	require.Equal(t, selectedBinary, installed)
+	_, err = supervisor.verifyInstalledVersion("indexed-package", "4.0.0")
+	require.NoError(t, err)
+}
+
+func TestSupervisorInstallsV2IndexedEntrypointAndRuntimeFromGzipArtifact(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	supervisor, err := NewSupervisor(Config{RootDir: root, PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+	require.NoError(t, err)
+
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	agentPath := "agent/" + strings.ReplaceAll(platform, "/", "-") + "/plugin"
+	runtimePath := "runtime/" + strings.ReplaceAll(platform, "/", "-") + "/gost"
+	agentBinary := []byte("signed indexed gzip agent executable")
+	runtimeBinary := []byte("signed indexed gzip gost runtime")
+	index := makeV2AgentEntrypointIndex(t, []v2AgentEntrypointIndexEntry{{
+		Architecture: platform, Path: agentPath, SHA256: sha256Hex(agentBinary),
+	}})
+	migrations := []byte(`{"format":"anixops.migrations/v1","migrations":[]}`)
+	routes := []byte(`{"api_version":"v2","routes":[]}`)
+	artifact := makeGzipTarArtifact(t, map[string][]byte{
+		"agent/entrypoints.json": index,
+		agentPath:                agentBinary,
+		runtimePath:              runtimeBinary,
+		"migrations/index.json":  migrations,
+		"compat/v2-routes.json":  routes,
+	})
+	request := signedPackageRequest(t, privateKey, artifact, Manifest{
+		ID: "indexed-gzip-runtime", Name: "Indexed Gzip Runtime", Version: "4.0.0", APIVersion: pluginAPIVersionV2,
+		Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{platform},
+		Entrypoints: map[string]string{
+			"runtime-gost-" + runtime.GOOS + "-" + runtime.GOARCH: runtimePath,
+		},
+		AgentEntrypoint:     &ManifestEntrypoint{Path: "agent/entrypoints.json", SHA256: sha256Hex(index)},
+		Migrations:          &ManifestMigrations{Index: "migrations/index.json", SHA256: sha256Hex(migrations)},
+		CompatibilityRoutes: &ManifestCompatibilityRoutes{Path: "compat/v2-routes.json", SHA256: sha256Hex(routes)},
+		RouteContractDigest: sha256Hex(routes), RuntimeAPIVersion: agentRuntimeAPIVersionV110,
+	})
+
+	_, err = supervisor.Install(context.Background(), request)
+	require.NoError(t, err)
+	versionDir := filepath.Join(root, "indexed-gzip-runtime", "4.0.0")
+	installedAgent, err := os.ReadFile(filepath.Join(versionDir, pluginBinaryName))
+	require.NoError(t, err)
+	require.Equal(t, agentBinary, installedAgent)
+	installedRuntime, err := os.ReadFile(filepath.Join(versionDir, pluginRuntimeDirName, "gost"))
+	require.NoError(t, err)
+	require.Equal(t, runtimeBinary, installedRuntime)
+	_, err = supervisor.verifyInstalledVersion("indexed-gzip-runtime", "4.0.0")
+	require.NoError(t, err)
+}
+
+func TestSupervisorRejectsTamperedV2IndexedPlatformEntrypoint(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+	require.NoError(t, err)
+
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	selectedPath := "agent/" + strings.ReplaceAll(platform, "/", "-") + "/plugin"
+	selectedBinary := []byte("signed indexed platform executable")
+	index := makeV2AgentEntrypointIndex(t, []v2AgentEntrypointIndexEntry{{
+		Architecture: platform, Path: selectedPath, SHA256: strings.Repeat("0", sha256.Size*2),
+	}})
+	migrations := []byte(`{"format":"anixops.migrations/v1","migrations":[]}`)
+	routes := []byte(`{"api_version":"v2","routes":[]}`)
+	artifact := makeZipArtifact(t, map[string][]byte{
+		"agent/entrypoints.json": index,
+		selectedPath:             selectedBinary,
+		"migrations/index.json":  migrations,
+		"compat/v2-routes.json":  routes,
+	})
+	request := signedPackageRequest(t, privateKey, artifact, Manifest{
+		ID: "tampered-indexed-package", Name: "Tampered Indexed Package", Version: "4.0.0", APIVersion: pluginAPIVersionV2,
+		Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{platform},
+		AgentEntrypoint:     &ManifestEntrypoint{Path: "agent/entrypoints.json", SHA256: sha256Hex(index)},
+		Migrations:          &ManifestMigrations{Index: "migrations/index.json", SHA256: sha256Hex(migrations)},
+		CompatibilityRoutes: &ManifestCompatibilityRoutes{Path: "compat/v2-routes.json", SHA256: sha256Hex(routes)},
+		RouteContractDigest: sha256Hex(routes), RuntimeAPIVersion: agentRuntimeAPIVersionV110,
+	})
+
+	_, err = supervisor.Install(context.Background(), request)
+	require.ErrorContains(t, err, "agent entrypoint digest")
+}
+
+func TestSupervisorRetainsV2DirectPlatformEntrypointCompatibility(t *testing.T) {
+	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	root := t.TempDir()
+	supervisor, err := NewSupervisor(Config{RootDir: root, PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
+	require.NoError(t, err)
+
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	entrypoint := "agent/" + strings.ReplaceAll(platform, "/", "-") + "/plugin"
+	binary := []byte("signed direct v2 executable")
+	migrations := []byte(`{"format":"anixops.migrations/v1","migrations":[]}`)
+	routes := []byte(`{"api_version":"v2","routes":[]}`)
+	artifact := makeZipArtifact(t, map[string][]byte{
+		entrypoint:              binary,
+		"migrations/index.json": migrations,
+		"compat/v2-routes.json": routes,
+	})
+	request := signedPackageRequest(t, privateKey, artifact, Manifest{
+		ID: "direct-v2-package", Name: "Direct V2 Package", Version: "3.4.0", APIVersion: pluginAPIVersionV2,
+		Publisher: manifestPublisher, Targets: []string{"agent"}, Architectures: []string{platform},
+		AgentEntrypoint:     &ManifestEntrypoint{Path: entrypoint, SHA256: sha256Hex(binary)},
+		Migrations:          &ManifestMigrations{Index: "migrations/index.json", SHA256: sha256Hex(migrations)},
+		CompatibilityRoutes: &ManifestCompatibilityRoutes{Path: "compat/v2-routes.json", SHA256: sha256Hex(routes)},
+		RouteContractDigest: sha256Hex(routes), RuntimeAPIVersion: agentRuntimeAPIVersionV110,
+	})
+
+	_, err = supervisor.Install(context.Background(), request)
+	require.NoError(t, err)
+	installed, err := os.ReadFile(filepath.Join(root, "direct-v2-package", "3.4.0", pluginBinaryName))
+	require.NoError(t, err)
+	require.Equal(t, binary, installed)
+	_, err = supervisor.verifyInstalledVersion("direct-v2-package", "3.4.0")
+	require.NoError(t, err)
 }
 
 func TestSupervisorMaterializesSignedPlatformRuntimes(t *testing.T) {
@@ -417,6 +586,20 @@ func signedPackageRequest(t *testing.T, privateKey ed25519.PrivateKey, artifact 
 	}
 }
 
+func sha256Hex(contents []byte) string {
+	digest := sha256.Sum256(contents)
+	return hex.EncodeToString(digest[:])
+}
+
+func makeV2AgentEntrypointIndex(t *testing.T, entries []v2AgentEntrypointIndexEntry) []byte {
+	t.Helper()
+	ordered := append([]v2AgentEntrypointIndexEntry(nil), entries...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Architecture < ordered[j].Architecture })
+	index, err := json.Marshal(v2AgentEntrypointIndex{Format: packageEntrypointIndexFormat, Entries: ordered})
+	require.NoError(t, err)
+	return index
+}
+
 func makeZipArtifact(t *testing.T, files map[string][]byte) []byte {
 	t.Helper()
 	var artifact bytes.Buffer
@@ -428,6 +611,27 @@ func makeZipArtifact(t *testing.T, files map[string][]byte) []byte {
 		require.NoError(t, err)
 	}
 	require.NoError(t, writer.Close())
+	return artifact.Bytes()
+}
+
+func makeGzipTarArtifact(t *testing.T, files map[string][]byte) []byte {
+	t.Helper()
+	var artifact bytes.Buffer
+	gzipWriter := gzip.NewWriter(&artifact)
+	tarWriter := tar.NewWriter(gzipWriter)
+	names := make([]string, 0, len(files))
+	for name := range files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		contents := files[name]
+		require.NoError(t, tarWriter.WriteHeader(&tar.Header{Name: name, Mode: 0o755, Size: int64(len(contents))}))
+		_, err := tarWriter.Write(contents)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tarWriter.Close())
+	require.NoError(t, gzipWriter.Close())
 	return artifact.Bytes()
 }
 

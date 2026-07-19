@@ -196,7 +196,7 @@ func TestRemoteInstallerRejectsArtifactSizeAndHashMismatch(t *testing.T) {
 	}
 }
 
-func TestRemoteInstallerRejectsArtifactMetadataAbove32MiB(t *testing.T) {
+func TestRemoteInstallerRejectsArtifactMetadataAbove64MiB(t *testing.T) {
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 	supervisor, err := NewSupervisor(Config{RootDir: t.TempDir(), PublicKey: publicKey, Runner: &fakeRunner{}, Health: &fakeHealth{}})
@@ -212,7 +212,7 @@ func TestRemoteInstallerRejectsArtifactMetadataAbove32MiB(t *testing.T) {
 	installer, err := NewRemoteInstaller(RemoteInstallerConfig{Supervisor: supervisor, BaseURL: "https://control.example.com", APIKey: "node-api-key"})
 	require.NoError(t, err)
 	_, err = installer.Handle(context.Background(), testEnvelope("oversized-artifact", "wireguard", "4.0.0-alpha.1", 1, payload))
-	require.ErrorContains(t, err, "size must be between 1 and 33554432 bytes")
+	require.ErrorContains(t, err, "size must be between 1 and 67108864 bytes")
 }
 
 func remoteInstallPayload(t *testing.T, publicKey ed25519.PublicKey, request InstallRequest, pluginID, version string) []byte {

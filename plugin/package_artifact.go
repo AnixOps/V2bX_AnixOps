@@ -7,6 +7,7 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,13 +19,14 @@ import (
 )
 
 const (
-	pluginPackageName          = "artifact.pkg"
-	pluginRuntimeDirName       = "runtime"
-	maxPluginArtifactBytes     = 32 << 20
-	maxPluginBinaryBytes       = 128 << 20
-	maxPluginRuntimeBytes      = 128 << 20
-	maxPluginRuntimeTotalBytes = 256 << 20
-	maxPluginRuntimeEntries    = 32
+	pluginPackageName             = "artifact.pkg"
+	pluginRuntimeDirName          = "runtime"
+	maxPluginArtifactBytes        = 64 << 20
+	maxPluginBinaryBytes          = 128 << 20
+	maxPluginRuntimeBytes         = 128 << 20
+	maxPluginRuntimeTotalBytes    = 256 << 20
+	maxPluginRuntimeEntries       = 32
+	maxPluginEntrypointIndexBytes = 1 << 20
 )
 
 type materializedRuntime struct {
@@ -42,7 +44,28 @@ type runtimeEntrypointDeclaration struct {
 	fallback   string
 }
 
+type v2AgentEntrypointIndex struct {
+	Format  string                        `json:"format"`
+	Entries []v2AgentEntrypointIndexEntry `json:"entries"`
+}
+
+type v2AgentEntrypointIndexEntry struct {
+	Architecture string `json:"architecture"`
+	Path         string `json:"path"`
+	SHA256       string `json:"sha256"`
+}
+
 func materializeAgentArtifact(manifest Manifest, artifact []byte) ([]byte, bool, error) {
+	if manifest.APIVersion == pluginAPIVersionV2 && manifest.AgentEntrypoint != nil {
+		binary, err := extractV2AgentEntrypoint(manifest, artifact, runtime.GOOS, runtime.GOARCH)
+		if err != nil {
+			return nil, false, err
+		}
+		if len(binary) == 0 {
+			return nil, false, errors.New("agent entrypoint is empty")
+		}
+		return binary, true, nil
+	}
 	entrypoint, declared := resolveAgentEntrypoint(manifest, runtime.GOOS, runtime.GOARCH)
 	if entrypoint != "" {
 		binary, err := extractPackageFile(artifact, entrypoint)
@@ -81,6 +104,134 @@ func resolveAgentEntrypoint(manifest Manifest, goos, goarch string) (string, boo
 		}
 	}
 	return "", false
+}
+
+func extractV2AgentEntrypoint(manifest Manifest, artifact []byte, goos, goarch string) ([]byte, error) {
+	if manifest.AgentEntrypoint == nil {
+		return nil, errors.New("plugin package does not declare an agent entrypoint")
+	}
+	entrypoint := manifest.AgentEntrypoint
+	if entrypoint.Path != agentEntrypointIndexPath {
+		expectedPath := "agent/" + goos + "-" + goarch + "/plugin"
+		if entrypoint.Path != expectedPath {
+			return nil, fmt.Errorf("agent entrypoint must match %q", expectedPath)
+		}
+		contents, err := extractPackageFile(artifact, entrypoint.Path)
+		if err != nil {
+			return nil, fmt.Errorf("extract agent entrypoint %q: %w", entrypoint.Path, err)
+		}
+		if !packageContentsMatchSHA256(contents, entrypoint.SHA256) {
+			return nil, fmt.Errorf("agent entrypoint digest mismatch for %q", entrypoint.Path)
+		}
+		return contents, nil
+	}
+
+	indexContents, err := extractPackageFileWithLimit(
+		artifact,
+		agentEntrypointIndexPath,
+		"agent entrypoint index",
+		maxPluginEntrypointIndexBytes,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("extract agent entrypoint index: %w", err)
+	}
+	if !packageContentsMatchSHA256(indexContents, entrypoint.SHA256) {
+		return nil, errors.New("agent entrypoint index digest mismatch")
+	}
+	index, err := decodeV2AgentEntrypointIndex(indexContents)
+	if err != nil {
+		return nil, err
+	}
+	selected, err := resolveV2AgentEntrypointIndex(index, manifest.Architectures, goos, goarch)
+	if err != nil {
+		return nil, err
+	}
+	contents, err := extractPackageFile(artifact, selected.Path)
+	if err != nil {
+		return nil, fmt.Errorf("extract agent entrypoint %q: %w", selected.Path, err)
+	}
+	if !packageContentsMatchSHA256(contents, selected.SHA256) {
+		return nil, fmt.Errorf("agent entrypoint digest mismatch for %q", selected.Path)
+	}
+	return contents, nil
+}
+
+func decodeV2AgentEntrypointIndex(contents []byte) (v2AgentEntrypointIndex, error) {
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	var index v2AgentEntrypointIndex
+	if err := decoder.Decode(&index); err != nil {
+		return v2AgentEntrypointIndex{}, fmt.Errorf("decode agent entrypoint index: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return v2AgentEntrypointIndex{}, errors.New("agent entrypoint index must contain one JSON value")
+		}
+		return v2AgentEntrypointIndex{}, fmt.Errorf("decode agent entrypoint index: %w", err)
+	}
+	if index.Format != packageEntrypointIndexFormat {
+		return v2AgentEntrypointIndex{}, fmt.Errorf("unsupported agent entrypoint index format %q", index.Format)
+	}
+	if len(index.Entries) == 0 || len(index.Entries) > 2 {
+		return v2AgentEntrypointIndex{}, errors.New("agent entrypoint index must declare one or two entries")
+	}
+	return index, nil
+}
+
+func resolveV2AgentEntrypointIndex(index v2AgentEntrypointIndex, architectures []string, goos, goarch string) (v2AgentEntrypointIndexEntry, error) {
+	declared := make(map[string]struct{}, len(architectures))
+	for _, architecture := range architectures {
+		if _, ok := indexedAgentEntrypointPath(architecture); !ok {
+			return v2AgentEntrypointIndexEntry{}, fmt.Errorf("agent entrypoint index requires os/arch manifest architecture %q", architecture)
+		}
+		declared[architecture] = struct{}{}
+	}
+	if len(declared) == 0 || len(declared) != len(index.Entries) {
+		return v2AgentEntrypointIndexEntry{}, errors.New("agent entrypoint index must cover every manifest architecture")
+	}
+
+	platform := goos + "/" + goarch
+	var selected v2AgentEntrypointIndexEntry
+	foundSelected := false
+	previous := ""
+	for _, entry := range index.Entries {
+		if entry.Architecture == "" || entry.Architecture <= previous {
+			return v2AgentEntrypointIndexEntry{}, errors.New("agent entrypoint index entries must be ordered by architecture")
+		}
+		previous = entry.Architecture
+		expectedPath, ok := indexedAgentEntrypointPath(entry.Architecture)
+		if !ok || entry.Path != expectedPath || !validSHA256(entry.SHA256) {
+			return v2AgentEntrypointIndexEntry{}, fmt.Errorf("agent entrypoint index entry for %q is invalid", entry.Architecture)
+		}
+		if _, ok := declared[entry.Architecture]; !ok {
+			return v2AgentEntrypointIndexEntry{}, fmt.Errorf("agent entrypoint index architecture %q is not declared", entry.Architecture)
+		}
+		if entry.Architecture == platform {
+			selected = entry
+			foundSelected = true
+		}
+	}
+	if !foundSelected {
+		return v2AgentEntrypointIndexEntry{}, fmt.Errorf("agent entrypoint index has no entry for %s", platform)
+	}
+	return selected, nil
+}
+
+func indexedAgentEntrypointPath(architecture string) (string, bool) {
+	parts := strings.Split(architecture, "/")
+	if len(parts) != 2 || !safeSegment(parts[0]) || !safeSegment(parts[1]) {
+		return "", false
+	}
+	return "agent/" + parts[0] + "-" + parts[1] + "/plugin", true
+}
+
+func packageContentsMatchSHA256(contents []byte, expected string) bool {
+	if !validSHA256(expected) {
+		return false
+	}
+	digest := sha256.Sum256(contents)
+	return strings.EqualFold(hex.EncodeToString(digest[:]), expected)
 }
 
 func materializeRuntimeArtifacts(manifest Manifest, artifact []byte, goos, goarch string) ([]materializedRuntime, bool, error) {
@@ -279,7 +430,12 @@ func verifyInstalledAgentArtifact(manifest Manifest, dir, binaryPath string) err
 	if !strings.EqualFold(hex.EncodeToString(digest[:]), manifest.ArtifactSHA256) {
 		return errors.New("installed plugin package hash mismatch")
 	}
-	expected, err := extractPackageFile(artifact, entrypoint)
+	var expected []byte
+	if manifest.APIVersion == pluginAPIVersionV2 {
+		expected, err = extractV2AgentEntrypoint(manifest, artifact, runtime.GOOS, runtime.GOARCH)
+	} else {
+		expected, err = extractPackageFile(artifact, entrypoint)
+	}
 	if err != nil {
 		return fmt.Errorf("verify installed agent entrypoint %q: %w", entrypoint, err)
 	}

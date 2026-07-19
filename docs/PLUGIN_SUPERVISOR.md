@@ -60,7 +60,7 @@ descriptor from the Agent Control stream. Its manifest and artifact URLs must
 be exact same-origin `/api/v3/agent/plugin-releases/<plugin>/<version>/...`
 paths with matching `sha256` and `size` query values. The Agent authenticates
 both raw-body GETs with its existing `X-API-Key`, refuses redirects and encoded
-or traversal paths, enforces a 1 MiB manifest limit and 32 MiB artifact limit,
+or traversal paths, enforces a 1 MiB manifest limit and 64 MiB artifact limit,
 then verifies exact size, SHA-256, publisher, API version, trust-root key ID,
 and Ed25519 signature before installation.
 

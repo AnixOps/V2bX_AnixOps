@@ -15,11 +15,13 @@ import (
 )
 
 const (
-	manifestPublisher          = "AnixOps"
-	pluginAPIVersionV1         = "v1"
-	pluginAPIVersionV2         = "v2"
-	pluginAPIVersion           = pluginAPIVersionV1
-	agentRuntimeAPIVersionV110 = "anixops.agent.sdk/v1.1.0"
+	manifestPublisher            = "AnixOps"
+	pluginAPIVersionV1           = "v1"
+	pluginAPIVersionV2           = "v2"
+	pluginAPIVersion             = pluginAPIVersionV1
+	agentRuntimeAPIVersionV110   = "anixops.agent.sdk/v1.1.0"
+	packageEntrypointIndexFormat = "anixops.package-entrypoints/v1"
+	agentEntrypointIndexPath     = "agent/entrypoints.json"
 )
 
 // Manifest describes the signed package contract accepted by the Agent. V1
@@ -206,8 +208,8 @@ func (m Manifest) validateV2Contract(goos, goarch string) error {
 	if err := validateManifestEntrypoint(m.AgentEntrypoint, "agent_entrypoint"); err != nil {
 		return err
 	}
-	if m.AgentEntrypoint.Path != "agent/"+goos+"-"+goarch+"/plugin" {
-		return fmt.Errorf("agent_entrypoint must match %s/%s", goos, goarch)
+	if m.AgentEntrypoint.Path != agentEntrypointIndexPath && m.AgentEntrypoint.Path != "agent/"+goos+"-"+goarch+"/plugin" {
+		return fmt.Errorf("agent_entrypoint must match %s/%s or %s", goos, goarch, agentEntrypointIndexPath)
 	}
 	if m.RuntimeAPIVersion != agentRuntimeAPIVersionV110 {
 		return fmt.Errorf("runtime_api_version must match %q", agentRuntimeAPIVersionV110)
